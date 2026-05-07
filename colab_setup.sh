@@ -63,7 +63,7 @@ COMMON_ARGS="
     --attn_viz_every 50
     --use_fp16 true
     --local_crops_number 6
-    --num_workers 4
+    --num_workers 2
     --norm_last_layer false
 "
 
