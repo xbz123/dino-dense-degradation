@@ -18,6 +18,7 @@ import datetime
 import time
 import math
 import json
+from glob import glob
 from pathlib import Path
 
 import numpy as np
@@ -33,6 +34,7 @@ from torchvision import models as torchvision_models
 import utils
 import vision_transformer as vits
 from vision_transformer import DINOHead
+from dense_diagnostics import compute_dense_diagnostics, save_attention_maps
 
 torchvision_archs = sorted(name for name in torchvision_models.__dict__
     if name.islower() and not name.startswith("__")
@@ -126,6 +128,24 @@ def get_args_parser():
     parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up
         distributed training; see https://pytorch.org/docs/stable/distributed.html""")
     parser.add_argument("--local_rank", default=0, type=int, help="Please ignore and do not set this argument.")
+
+    # Dense Degradation diagnostics
+    parser.add_argument('--val_data_path', default='', type=str,
+        help='Path to validation data for dense degradation diagnostics.')
+    parser.add_argument('--diag_every', default=10, type=int,
+        help='Compute dense degradation diagnostics every N epochs.')
+    parser.add_argument('--attn_viz_every', default=50, type=int,
+        help='Save attention map visualizations every N epochs.')
+    parser.add_argument('--diag_num_batches', default=50, type=int,
+        help='Number of validation batches to use for diagnostics.')
+
+    # Gradient accumulation (for small-GPU training)
+    parser.add_argument('--accum_steps', default=1, type=int,
+        help='Gradient accumulation steps. Effective batch = batch_size_per_gpu * accum_steps.')
+
+    # Checkpoint management
+    parser.add_argument('--keep_last_ckpts', default=0, type=int,
+        help='Keep only the last N periodic checkpoints (0 = keep all).')
     return parser
 
 
@@ -235,21 +255,27 @@ def train_dino(args):
         fp16_scaler = torch.cuda.amp.GradScaler()
 
     # ============ init schedulers ... ============
+    # When using gradient accumulation, the effective number of optimizer steps
+    # per epoch is reduced. We scale the schedules accordingly so that the
+    # total learning rate / momentum trajectory stays the same.
+    effective_loader_len = len(data_loader) // args.accum_steps
     lr_schedule = utils.cosine_scheduler(
-        args.lr * (args.batch_size_per_gpu * utils.get_world_size()) / 256.,  # linear scaling rule
+        args.lr * (args.batch_size_per_gpu * args.accum_steps * utils.get_world_size()) / 256.,  # linear scaling rule
         args.min_lr,
-        args.epochs, len(data_loader),
+        args.epochs, effective_loader_len,
         warmup_epochs=args.warmup_epochs,
     )
     wd_schedule = utils.cosine_scheduler(
         args.weight_decay,
         args.weight_decay_end,
-        args.epochs, len(data_loader),
+        args.epochs, effective_loader_len,
     )
     # momentum parameter is increased to 1. during training with a cosine schedule
     momentum_schedule = utils.cosine_scheduler(args.momentum_teacher, 1,
-                                               args.epochs, len(data_loader))
+                                               args.epochs, effective_loader_len)
     print(f"Loss, optimizer and schedulers ready.")
+    print(f"Effective batch size: {args.batch_size_per_gpu * args.accum_steps * utils.get_world_size()}")
+    print(f"Gradient accumulation steps: {args.accum_steps}")
 
     # ============ optionally resume training ... ============
     to_restore = {"epoch": 0}
@@ -274,6 +300,29 @@ def train_dino(args):
             data_loader, optimizer, lr_schedule, wd_schedule, momentum_schedule,
             epoch, fp16_scaler, args)
 
+        # ============ dense degradation diagnostics ... ============
+        if utils.is_main_process() and args.val_data_path and epoch % args.diag_every == 0:
+            print(f"Computing dense degradation diagnostics at epoch {epoch}...")
+            # Use teacher backbone (without projection head) for feature extraction
+            backbone = teacher_without_ddp.backbone
+            diag_stats = compute_dense_diagnostics(
+                backbone, args.val_data_path, torch.device('cuda'),
+                num_batches=args.diag_num_batches,
+            )
+            train_stats.update(diag_stats)
+            print(f"  effective_rank={diag_stats.get('diag_effective_rank', 'N/A'):.2f}  "
+                  f"cls_patch_cos={diag_stats.get('diag_cls_patch_cosine', 'N/A'):.4f}  "
+                  f"cond_number={diag_stats.get('diag_condition_number', 'N/A'):.2f}")
+
+        # ============ attention map visualization ... ============
+        if utils.is_main_process() and args.val_data_path and epoch % args.attn_viz_every == 0:
+            print(f"Saving attention maps at epoch {epoch}...")
+            backbone = teacher_without_ddp.backbone
+            save_attention_maps(
+                backbone, args.val_data_path, epoch, args.output_dir,
+                torch.device('cuda'),
+            )
+
         # ============ writing logs ... ============
         save_dict = {
             'student': student.state_dict(),
@@ -288,6 +337,13 @@ def train_dino(args):
         utils.save_on_master(save_dict, os.path.join(args.output_dir, 'checkpoint.pth'))
         if args.saveckp_freq and epoch % args.saveckp_freq == 0:
             utils.save_on_master(save_dict, os.path.join(args.output_dir, f'checkpoint{epoch:04}.pth'))
+
+        # ============ cleanup old checkpoints ... ============
+        if utils.is_main_process() and args.keep_last_ckpts > 0:
+            periodic_ckpts = sorted(glob(os.path.join(args.output_dir, 'checkpoint[0-9]*.pth')))
+            for old_ckpt in periodic_ckpts[:-args.keep_last_ckpts]:
+                os.remove(old_ckpt)
+
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      'epoch': epoch}
         if utils.is_main_process():
@@ -299,17 +355,21 @@ def train_dino(args):
 
 
 def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loader,
-                    optimizer, lr_schedule, wd_schedule, momentum_schedule,epoch,
+                    optimizer, lr_schedule, wd_schedule, momentum_schedule, epoch,
                     fp16_scaler, args):
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Epoch: [{}/{}]'.format(epoch, args.epochs)
+    accum_steps = args.accum_steps
+    optimizer.zero_grad()
     for it, (images, _) in enumerate(metric_logger.log_every(data_loader, 10, header)):
         # update weight decay and learning rate according to their schedule
-        it = len(data_loader) * epoch + it  # global training iteration
+        # With gradient accumulation, we update LR/WD every accum_steps
+        opt_step = (len(data_loader) * epoch + it) // accum_steps
+        opt_step = min(opt_step, len(lr_schedule) - 1)
         for i, param_group in enumerate(optimizer.param_groups):
-            param_group["lr"] = lr_schedule[it]
+            param_group["lr"] = lr_schedule[opt_step]
             if i == 0:  # only the first group is regularized
-                param_group["weight_decay"] = wd_schedule[it]
+                param_group["weight_decay"] = wd_schedule[opt_step]
 
         # move images to gpu
         images = [im.cuda(non_blocking=True) for im in images]
@@ -323,35 +383,44 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
             print("Loss is {}, stopping training".format(loss.item()), force=True)
             sys.exit(1)
 
-        # student update
-        optimizer.zero_grad()
+        # Scale loss for gradient accumulation
+        loss = loss / accum_steps
+
+        # backward pass (accumulate gradients)
         param_norms = None
         if fp16_scaler is None:
             loss.backward()
-            if args.clip_grad:
-                param_norms = utils.clip_gradients(student, args.clip_grad)
-            utils.cancel_gradients_last_layer(epoch, student,
-                                              args.freeze_last_layer)
-            optimizer.step()
         else:
             fp16_scaler.scale(loss).backward()
-            if args.clip_grad:
-                fp16_scaler.unscale_(optimizer)  # unscale the gradients of optimizer's assigned params in-place
-                param_norms = utils.clip_gradients(student, args.clip_grad)
-            utils.cancel_gradients_last_layer(epoch, student,
-                                              args.freeze_last_layer)
-            fp16_scaler.step(optimizer)
-            fp16_scaler.update()
 
-        # EMA update for the teacher
-        with torch.no_grad():
-            m = momentum_schedule[it]  # momentum parameter
-            for param_q, param_k in zip(student.module.parameters(), teacher_without_ddp.parameters()):
-                param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
+        # optimizer step only every accum_steps iterations
+        if (it + 1) % accum_steps == 0 or (it + 1) == len(data_loader):
+            if fp16_scaler is None:
+                if args.clip_grad:
+                    param_norms = utils.clip_gradients(student, args.clip_grad)
+                utils.cancel_gradients_last_layer(epoch, student,
+                                                  args.freeze_last_layer)
+                optimizer.step()
+            else:
+                if args.clip_grad:
+                    fp16_scaler.unscale_(optimizer)
+                    param_norms = utils.clip_gradients(student, args.clip_grad)
+                utils.cancel_gradients_last_layer(epoch, student,
+                                                  args.freeze_last_layer)
+                fp16_scaler.step(optimizer)
+                fp16_scaler.update()
+            optimizer.zero_grad()
+
+            # EMA update for the teacher (only at optimizer steps)
+            with torch.no_grad():
+                m_step = min(opt_step, len(momentum_schedule) - 1)
+                m = momentum_schedule[m_step]
+                for param_q, param_k in zip(student.module.parameters(), teacher_without_ddp.parameters()):
+                    param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
 
         # logging
         torch.cuda.synchronize()
-        metric_logger.update(loss=loss.item())
+        metric_logger.update(loss=loss.item() * accum_steps)  # log un-scaled loss
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(wd=optimizer.param_groups[0]["weight_decay"])
     # gather the stats from all processes
