@@ -7,7 +7,9 @@
 #
 # Prerequisites:
 #   - Google Drive mounted at /content/drive
-#   - imagenet100.tar uploaded to /content/drive/MyDrive/
+#
+# Data is downloaded automatically from HuggingFace on first run,
+# then cached on Google Drive for future sessions.
 # =============================================================================
 
 set -e
@@ -19,18 +21,25 @@ echo "  Experiment: ${EXPERIMENT}"
 echo "========================================="
 
 # --- 1. Install dependencies ---
-pip install -q matplotlib
+pip install -q datasets matplotlib
 
-# --- 2. Copy data from Drive to local SSD (CRITICAL for I/O speed) ---
+# --- 2. Prepare ImageNet-100 data ---
 DATA_DIR="/content/imagenet100"
-if [ ! -d "${DATA_DIR}/train" ]; then
-    echo "Copying ImageNet-100 from Drive to local SSD..."
-    cp /content/drive/MyDrive/imagenet100.tar /content/
-    tar xf /content/imagenet100.tar -C /content/
-    rm /content/imagenet100.tar
+DRIVE_DATA="/content/drive/MyDrive/imagenet100"
+
+if [ -d "${DATA_DIR}/train" ] && [ "$(find ${DATA_DIR}/train -type f | head -1)" ]; then
+    echo "Data already on local SSD: $(find ${DATA_DIR}/train -type f | wc -l) training images"
+elif [ -d "${DRIVE_DATA}/train" ] && [ "$(find ${DRIVE_DATA}/train -type f | head -1)" ]; then
+    echo "Copying cached data from Drive to local SSD..."
+    cp -r ${DRIVE_DATA} ${DATA_DIR}
     echo "Data ready: $(find ${DATA_DIR}/train -type f | wc -l) training images"
 else
-    echo "Data already present: $(find ${DATA_DIR}/train -type f | wc -l) training images"
+    echo "Downloading ImageNet-100 from HuggingFace (first time only)..."
+    python prepare_data.py --output_dir ${DATA_DIR}
+
+    echo "Caching dataset to Google Drive for future sessions..."
+    cp -r ${DATA_DIR} ${DRIVE_DATA}
+    echo "Cached to ${DRIVE_DATA}"
 fi
 
 # --- 3. Set output directory on Drive (for checkpoint persistence) ---
