@@ -47,10 +47,12 @@ OUTPUT_DIR="/content/drive/MyDrive/dino_in100_${EXPERIMENT}"
 mkdir -p "${OUTPUT_DIR}"
 
 # --- 4. Training parameters ---
+# NOTE: Start with 300 epochs to detect degradation trends early.
+# If trends are clear, stop. If more data needed, increase --epochs and resume.
 COMMON_ARGS="
     --arch vit_small
     --patch_size 16
-    --epochs 800
+    --epochs 300
     --batch_size_per_gpu 64
     --accum_steps 4
     --warmup_teacher_temp_epochs 30
@@ -59,10 +61,10 @@ COMMON_ARGS="
     --output_dir ${OUTPUT_DIR}
     --saveckp_freq 20
     --keep_last_ckpts 3
-    --diag_every 10
-    --attn_viz_every 50
+    --diag_every 5
+    --attn_viz_every 25
     --use_fp16 true
-    --local_crops_number 6
+    --local_crops_number 4
     --num_workers 2
     --norm_last_layer false
 "
