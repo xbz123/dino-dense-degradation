@@ -51,8 +51,8 @@ COMMON_ARGS="
     --arch vit_small
     --patch_size 16
     --epochs 800
-    --batch_size_per_gpu 32
-    --accum_steps 8
+    --batch_size_per_gpu 64
+    --accum_steps 4
     --warmup_teacher_temp_epochs 30
     --data_path ${DATA_DIR}/train
     --val_data_path ${DATA_DIR}/val
@@ -63,7 +63,7 @@ COMMON_ARGS="
     --attn_viz_every 50
     --use_fp16 true
     --local_crops_number 6
-    --num_workers 2
+    --num_workers 4
     --norm_last_layer false
 "
 
