@@ -420,10 +420,15 @@ def discover_checkpoints(ckpt_dir):
 # =====================================================================
 
 @torch.no_grad()
-def extract_features(model, dataloader, device):
-    """Extract patch token features from frozen backbone for all images."""
-    all_features = []
-    all_targets = []
+def extract_features(model, dataloader, device, feature_dtype=torch.float16):
+    """Extract patch token features from frozen backbone for all images.
+
+    Store cached features/masks compactly on CPU so Colab RAM does not spike.
+    """
+    n_images = len(dataloader.dataset)
+    features = None
+    targets_all = None
+    offset = 0
 
     for imgs, targets in dataloader:
         imgs = imgs.to(device)
@@ -431,10 +436,26 @@ def extract_features(model, dataloader, device):
         output = model.get_intermediate_layers(imgs, n=1)[0]
         # Remove CLS token, keep only patch tokens
         patch_tokens = output[:, 1:]  # (B, N_patches, embed_dim)
-        all_features.append(patch_tokens.cpu())
-        all_targets.append(targets)
 
-    return torch.cat(all_features, dim=0), torch.cat(all_targets, dim=0)
+        batch_size = patch_tokens.shape[0]
+        if features is None:
+            features = torch.empty(
+                (n_images, patch_tokens.shape[1], patch_tokens.shape[2]),
+                dtype=feature_dtype,
+                device='cpu',
+            )
+            targets_all = torch.empty(
+                (n_images, targets.shape[1], targets.shape[2]),
+                dtype=torch.uint8,
+                device='cpu',
+            )
+
+        end = offset + batch_size
+        features[offset:end].copy_(patch_tokens.cpu().to(feature_dtype))
+        targets_all[offset:end].copy_(targets.to(torch.uint8))
+        offset = end
+
+    return features, targets_all
 
 
 def train_linear_head(features_train, targets_train, features_val, targets_val,
@@ -455,8 +476,8 @@ def train_linear_head(features_train, targets_train, features_val, targets_val,
 
         for i in range(0, n_train, batch_size):
             idx = perm[i:i + batch_size]
-            feat = features_train[idx].to(device)
-            tgt = targets_train[idx].to(device)
+            feat = features_train[idx].to(device=device, dtype=torch.float32)
+            tgt = targets_train[idx].to(device=device, dtype=torch.long)
 
             logits = head(feat)
             loss = F.cross_entropy(logits, tgt, ignore_index=255)
@@ -475,8 +496,8 @@ def train_linear_head(features_train, targets_train, features_val, targets_val,
     all_miou = []
     with torch.no_grad():
         for i in range(0, features_val.shape[0], batch_size):
-            feat = features_val[i:i + batch_size].to(device)
-            tgt = targets_val[i:i + batch_size].to(device)
+            feat = features_val[i:i + batch_size].to(device=device, dtype=torch.float32)
+            tgt = targets_val[i:i + batch_size].to(device=device, dtype=torch.long)
 
             logits = head(feat)
             pred = logits.argmax(dim=1)
@@ -553,6 +574,9 @@ def main():
                         help='Number of epochs to train linear head per checkpoint')
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--feature_dtype', type=str, default='float16',
+                        choices=['float16', 'float32'],
+                        help='CPU dtype for cached patch features; float16 saves Colab RAM')
     parser.add_argument('--output_dir', type=str, default='./dense_eval_results',
                         help='Directory to save results and plot')
     args = parser.parse_args()
@@ -563,6 +587,8 @@ def main():
     # Make img_size divisible by patch_size
     args.img_size = (args.img_size // args.patch_size) * args.patch_size
     print(f"Image size (adjusted): {args.img_size}")
+    feature_dtype = torch.float16 if args.feature_dtype == 'float16' else torch.float32
+    print(f"Cached feature dtype: {args.feature_dtype}")
 
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -612,12 +638,16 @@ def main():
 
         # Extract features (frozen backbone, no gradients)
         print("  Extracting train features...")
-        features_train, targets_train = extract_features(model, train_loader, device)
-        print(f"  Train features shape: {features_train.shape}")
+        features_train, targets_train = extract_features(
+            model, train_loader, device, feature_dtype=feature_dtype
+        )
+        print(f"  Train features shape: {features_train.shape}, dtype: {features_train.dtype}")
 
         print("  Extracting val features...")
-        features_val, targets_val = extract_features(model, val_loader, device)
-        print(f"  Val features shape: {features_val.shape}")
+        features_val, targets_val = extract_features(
+            model, val_loader, device, feature_dtype=feature_dtype
+        )
+        print(f"  Val features shape: {features_val.shape}, dtype: {features_val.dtype}")
 
         # Free backbone GPU memory
         del model
