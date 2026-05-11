@@ -20,6 +20,7 @@ import sys
 import json
 import math
 import argparse
+import difflib
 import numpy as np
 from functools import partial
 from collections import OrderedDict
@@ -372,6 +373,48 @@ def extract_epoch(filename):
     return None
 
 
+def discover_checkpoints(ckpt_dir):
+    """Find checkpoint files and fail early with actionable path hints."""
+    if not os.path.isdir(ckpt_dir):
+        parent = os.path.dirname(os.path.abspath(ckpt_dir))
+        folder = os.path.basename(os.path.abspath(ckpt_dir))
+        hint = ""
+
+        if os.path.isdir(parent):
+            candidates = [
+                name for name in os.listdir(parent)
+                if os.path.isdir(os.path.join(parent, name))
+            ]
+            close = difflib.get_close_matches(folder, candidates, n=5, cutoff=0.45)
+            if close:
+                options = "\n".join(
+                    f"  - {os.path.join(parent, name)}" for name in close
+                )
+                hint = f"\nDid you mean one of these folders?\n{options}"
+
+        raise FileNotFoundError(
+            f"Checkpoint directory does not exist: {ckpt_dir}{hint}\n"
+            "Pass the correct folder with --ckpt_dir, for example:\n"
+            "  --ckpt_dir /content/drive/MyDrive/dinocehckpoint"
+        )
+
+    ckpt_files = []
+    for f in os.listdir(ckpt_dir):
+        if f.endswith('.pth'):
+            epoch = extract_epoch(f)
+            if epoch is not None:
+                ckpt_files.append((epoch, os.path.join(ckpt_dir, f)))
+
+    ckpt_files.sort(key=lambda x: x[0])
+    if not ckpt_files:
+        raise FileNotFoundError(
+            f"No recognizable checkpoint*.pth files found in: {ckpt_dir}\n"
+            "Expected names like checkpoint0020.pth or checkpoint108.pth."
+        )
+
+    return ckpt_files
+
+
 # =====================================================================
 # 7. Train and Evaluate for a single checkpoint
 # =====================================================================
@@ -523,6 +566,9 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
 
+    # Fail fast before downloading VOC if the Google Drive path is wrong.
+    ckpt_files = discover_checkpoints(args.ckpt_dir)
+
     # ---- Step 1: Prepare VOC dataset ----
     print("\n" + "=" * 60)
     print("Step 1: Preparing PASCAL VOC 2012 dataset...")
@@ -545,14 +591,6 @@ def main():
     print("Step 2: Discovering checkpoint files...")
     print("=" * 60)
 
-    ckpt_files = []
-    for f in os.listdir(args.ckpt_dir):
-        if f.endswith('.pth'):
-            epoch = extract_epoch(f)
-            if epoch is not None:
-                ckpt_files.append((epoch, os.path.join(args.ckpt_dir, f)))
-
-    ckpt_files.sort(key=lambda x: x[0])
     print(f"Found {len(ckpt_files)} checkpoints:")
     for epoch, path in ckpt_files:
         print(f"  Epoch {epoch:>4d}: {os.path.basename(path)}")
