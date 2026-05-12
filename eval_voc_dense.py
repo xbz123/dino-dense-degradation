@@ -696,9 +696,11 @@ def main():
 
     best = max(results, key=lambda x: x['miou'])
     last = results[-1]
+    change = last['miou'] - best['miou']
+    trend = "degradation" if change < 0 else "no degradation observed"
     print(f"\nBest:  Epoch {best['epoch']}, mIoU = {best['miou']:.2f}%")
     print(f"Last:  Epoch {last['epoch']}, mIoU = {last['miou']:.2f}%")
-    print(f"Diff:  {last['miou'] - best['miou']:.2f}% (degradation)")
+    print(f"Diff:  {change:.2f}% ({trend})")
 
     # Generate plot
     plot_path = os.path.join(args.output_dir, 'dense_degradation_voc.png')
