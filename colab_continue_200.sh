@@ -10,15 +10,13 @@
 #   !rm -rf /content/dino
 #   !git clone https://github.com/xbz123/dino-dense-degradation.git /content/dino
 #   %cd /content/dino
-#   !bash colab_continue_200.sh
+#   !bash colab_continue_200.sh /content/drive/MyDrive/dinocheckpoint/checkpoint170.pth
 #
 # What this script does:
 #   1. Uses /content/drive/MyDrive/imagenet100.tar when available.
 #   2. Extracts ImageNet100 to /content/imagenet100 on local SSD.
-#   3. Resumes from /content/drive/MyDrive/dino_colab/dino_output/checkpoint.pth.
-#   4. If no output checkpoint exists, copies the latest checkpoint*.pth from
-#      /content/drive/MyDrive/dinocheckpoint.
-#   5. Continues training to 200 epochs.
+#   3. Resumes from the checkpoint path passed as the first argument.
+#   4. Continues training to 200 epochs.
 # =============================================================================
 
 set -euo pipefail
@@ -38,7 +36,7 @@ LOCAL_TAR="/content/imagenet100.tar"
 DRIVE_ROOT="/content/drive/MyDrive/dino_colab"
 CHECKPOINT_DIR="/content/drive/MyDrive/dinocheckpoint"
 OUTPUT_DIR="${DRIVE_ROOT}/dino_output"
-RESUME_CKPT="${OUTPUT_DIR}/checkpoint.pth"
+RESUME_CKPT="${1:-/content/drive/MyDrive/dinocheckpoint/checkpoint170.pth}"
 
 mkdir -p "${DRIVE_ROOT}"
 mkdir -p "${OUTPUT_DIR}"
@@ -46,6 +44,7 @@ mkdir -p "${OUTPUT_DIR}"
 echo "DATA_DIR=${DATA_DIR}"
 echo "OUTPUT_DIR=${OUTPUT_DIR}"
 echo "CHECKPOINT_DIR=${CHECKPOINT_DIR}"
+echo "RESUME_CKPT=${RESUME_CKPT}"
 
 # -----------------------------
 # 1. Basic checks
@@ -131,32 +130,14 @@ echo "Train classes: ${TRAIN_CLASSES}"
 echo "Val classes: ${VAL_CLASSES}"
 
 # -----------------------------
-# 4. Prepare resume checkpoint
+# 4. Check resume checkpoint
 # -----------------------------
-if [ -s "${RESUME_CKPT}" ]; then
-    echo "Resume checkpoint already exists in output dir:"
+if [ ! -s "${RESUME_CKPT}" ]; then
+    echo "ERROR: Resume checkpoint not found or empty:"
     echo "  ${RESUME_CKPT}"
-    echo "Will resume from this checkpoint."
-else
-    echo "No checkpoint.pth found in output dir."
-    echo "Looking for latest checkpoint in ${CHECKPOINT_DIR}..."
-
-    if [ ! -d "${CHECKPOINT_DIR}" ]; then
-        echo "ERROR: Checkpoint directory not found: ${CHECKPOINT_DIR}"
-        exit 1
-    fi
-
-    LATEST_CKPT=$(find "${CHECKPOINT_DIR}" -maxdepth 1 -name "checkpoint*.pth" -type f | sort -V | tail -n 1 || true)
-
-    if [ -z "${LATEST_CKPT}" ]; then
-        echo "ERROR: No checkpoint*.pth found in ${CHECKPOINT_DIR}"
-        exit 1
-    fi
-
-    echo "Copying latest checkpoint:"
-    echo "  from: ${LATEST_CKPT}"
-    echo "  to:   ${RESUME_CKPT}"
-    cp "${LATEST_CKPT}" "${RESUME_CKPT}"
+    echo "Pass the checkpoint explicitly, for example:"
+    echo "  bash colab_continue_200.sh /content/drive/MyDrive/dinocheckpoint/checkpoint170.pth"
+    exit 1
 fi
 
 ls -lh "${RESUME_CKPT}"
@@ -176,6 +157,7 @@ torchrun --nproc_per_node=1 main_dino.py \
     --data_path "${DATA_DIR}/train" \
     --val_data_path "${DATA_DIR}/val" \
     --output_dir "${OUTPUT_DIR}" \
+    --resume_from "${RESUME_CKPT}" \
     --saveckp_freq 10 \
     --keep_last_ckpts 5 \
     --diag_every 5 \
