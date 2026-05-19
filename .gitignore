@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+
+# Local checkpoints and experiment artifacts.
+*.pth
+checkpoint*.pth
+dinocehckpoint/
+dino_checkpoint*/
+dino_checkpoints*/
+dino_eval_checkpoints/
+dense_eval_results/
+dino_dense_degradation_eval/
+
+# Local paper/reference copies should not be committed.
+Exploring Structural Degradation in Dense Representations for Self-supervised Learning .pdf
