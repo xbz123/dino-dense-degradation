@@ -39,7 +39,7 @@ Automatically cleans up old periodic checkpoints to prevent disk space exhaustio
 ### 1. Setup
 ```python
 # Clone this repo
-!git clone https://github.com/YOUR_USERNAME/dino-dense-degradation.git /content/dino
+!git clone https://github.com/xbz123/dino-dense-degradation.git /content/dino
 %cd /content/dino
 
 # Mount Google Drive
@@ -94,6 +94,24 @@ python eval_knn.py \
     --checkpoint_key teacher \
     --data_path /content/imagenet100
 ```
+
+### 6. Dense Degradation Evaluation
+For the full checkpoint sweep, open:
+
+```
+notebooks/colab_dense_degradation_all_checkpoints.ipynb
+```
+
+The notebook scans `MyDrive/dinocheckpoint` for all recognizable
+`checkpoint*.pth` files, runs PASCAL VOC frozen-backbone linear segmentation,
+and exports DSE-style patch statistics plus fixed-image CLS attention and patch
+feature visualizations. Results are saved under:
+
+```
+MyDrive/dino_dense_degradation_eval/to_epoch_XXXX/
+```
+
+where `XXXX` is the largest checkpoint epoch found in the Drive folder.
 
 ## New CLI Arguments
 
