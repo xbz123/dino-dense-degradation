@@ -82,11 +82,22 @@ These diagnostics are intended to be compared against dense evaluation results
 to determine whether declining segmentation performance correlates with patch
 feature collapse or CLS-patch homogenization.
 
-The Colab dense evaluation notebook additionally exports fixed-image qualitative
-diagnostics requested for research inspection, including patch feature magnitude
-histograms, CLS attention magnitude histograms, CLS-to-patch attention maps,
-CLS similarity maps, patch norm maps, PCA maps of patch features, and DSE-style
-class-separability/effective-rank summaries.
+The Colab dense evaluation notebook now delegates patch-level analysis to
+standalone repository scripts so the workflow is easier to rerun and debug:
+
+- `analyze_patch_statistics.py` scans checkpoints and computes DSE-style class
+  separability, effective rank, covariance spectrum, CLS-patch cosine, patch
+  feature magnitude histograms, CLS attention statistics, fixed-query patch
+  similarity maps, and PCA maps of patch features.
+- `plot_dense_diagnostics.py` merges VOC mIoU with structural diagnostics and
+  writes the summary figure.
+- `make_summary_report.py` writes a compact Markdown report for each run.
+
+The notebook still controls the Colab environment: it mounts Google Drive,
+normalizes checkpoint filenames into a runtime directory, runs VOC linear
+segmentation, runs the patch diagnostic suite, and saves persistent outputs
+under a final-epoch directory such as
+`MyDrive/dino_dense_degradation_eval/to_epoch_0215/`.
 
 ## Next Steps
 
@@ -98,8 +109,10 @@ Planned research and engineering work:
    rank and CLS-patch cosine similarity.
 3. Compare VOC mIoU with the Colab notebook's DSE-style class separability,
    effective-rank, patch-statistic, and CLS-attention outputs.
-4. Continue pretraining toward the target training horizon where needed.
-5. Use the confirmed degradation pattern to evaluate mitigation strategies,
+4. Add COCO-Stuff linear segmentation on selected checkpoints if VOC remains
+   stable but structural diagnostics drift.
+5. Continue pretraining toward the target training horizon where needed.
+6. Use the confirmed degradation pattern to evaluate mitigation strategies,
    such as dense contrastive objectives or architectural changes that preserve
    local representations.
 
@@ -109,6 +122,11 @@ Planned research and engineering work:
 - `utils.py`: Checkpoint loading, distributed helpers, and shared utilities.
 - `dense_diagnostics.py`: Dense representation diagnostics used during
   training.
+- `dense_eval_utils.py`: Shared checkpoint discovery and run-output helpers.
+- `dense_patch_diagnostics.py`: Shared patch-level metric helpers.
+- `analyze_patch_statistics.py`: Offline/Colab patch diagnostic runner.
+- `plot_dense_diagnostics.py`: Diagnostic plotting and VOC merge utility.
+- `make_summary_report.py`: Markdown report generator for evaluation runs.
 - `eval_voc_dense.py`: PASCAL VOC dense evaluation script.
 - `notebooks/colab_dense_degradation_all_checkpoints.ipynb`: Colab workflow for
   evaluating all Drive checkpoints and exporting mIoU, DSE-style metrics, and

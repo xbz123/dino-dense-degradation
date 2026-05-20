@@ -104,14 +104,35 @@ notebooks/colab_dense_degradation_all_checkpoints.ipynb
 
 The notebook scans `MyDrive/dinocheckpoint` for all recognizable
 `checkpoint*.pth` files, runs PASCAL VOC frozen-backbone linear segmentation,
-and exports DSE-style patch statistics plus fixed-image CLS attention and patch
-feature visualizations. Results are saved under:
+and exports DSE-style patch statistics plus fixed-image CLS attention, patch
+similarity, and patch feature visualizations. Results are saved under:
 
 ```
 MyDrive/dino_dense_degradation_eval/to_epoch_XXXX/
 ```
 
 where `XXXX` is the largest checkpoint epoch found in the Drive folder.
+
+The notebook is a thin Colab wrapper around these repository scripts:
+
+- `analyze_patch_statistics.py`: scans checkpoints and computes DSE-style
+  class separability, effective rank, covariance spectrum, CLS-patch cosine,
+  patch norm histograms, CLS attention statistics, fixed-query patch similarity
+  maps, and PCA feature maps.
+- `plot_dense_diagnostics.py`: merges patch diagnostics with VOC mIoU and
+  writes the summary figure.
+- `make_summary_report.py`: writes a compact Markdown report for the run.
+
+Expected output folders:
+
+```
+MyDrive/dino_dense_degradation_eval/to_epoch_XXXX/
+├── selected_checkpoints.json
+├── voc_all_checkpoints/
+├── patch_attention_dse_all_checkpoints/
+├── figures/
+└── summary_report.md
+```
 
 ## New CLI Arguments
 
