@@ -1,7 +1,7 @@
 """Patch-level diagnostics for DINO dense degradation experiments.
 
 The functions in this module are intentionally independent from Colab. The
-notebook and CLI script use them for DSE-style structural metrics, CLS-patch
+notebook and CLI script use them for DSE structural metrics, CLS-patch
 similarity, attention statistics, and fixed-query patch similarity maps.
 """
 
@@ -206,7 +206,7 @@ def _init_centers(x: torch.Tensor, k: int) -> torch.Tensor:
 
 
 def kmeans(x: torch.Tensor, k: int, iters: int = 20) -> tuple[torch.Tensor, torch.Tensor]:
-    """Small deterministic k-means helper for DSE-style pseudo classes."""
+    """Small deterministic k-means helper for DSE pseudo classes."""
     if x.shape[0] < k:
         raise ValueError(f"k={k} cannot exceed number of samples {x.shape[0]}")
     centers = _init_centers(x, k)
@@ -232,11 +232,10 @@ def class_separability(
     max_tokens: int = 12000,
     seed: int | None = None,
 ) -> dict[str, float]:
-    """Compute a lightweight DSE-style separability term using pseudo labels."""
+    """Compute the DSE class-separability term using k-means pseudo labels."""
     del seed  # deterministic initialization keeps Colab runs reproducible.
     x = patch_tokens.reshape(-1, patch_tokens.shape[-1]).float()
     x = sample_rows(x, max_tokens)
-    x = F.normalize(x, dim=-1)
     if x.shape[0] <= k:
         return {
             f"mintra_k{k}": float("nan"),
@@ -246,17 +245,23 @@ def class_separability(
 
     labels, centers = kmeans(x, k)
     intra_values = []
+    inter_values = []
     for index in range(k):
         points = x[labels == index]
         if points.numel() == 0:
             continue
-        distances = torch.cdist(points, centers[index : index + 1]).reshape(-1)
-        intra_values.append(distances.mean())
+        centered = points - points.mean(dim=0, keepdim=True)
+        singular = torch.linalg.svdvals(centered)
+        denom = math.sqrt(max(1, points.shape[0] - 1))
+        intra_values.append(singular[: min(points.shape[0], points.shape[1])].sum() / denom)
 
-    center_distances = torch.cdist(centers, centers)
-    center_distances.fill_diagonal_(float("inf"))
-    inter = center_distances.min(dim=1).values.mean()
+        other_indices = torch.arange(k, device=x.device) != index
+        other_centers = centers[other_indices]
+        nearest_other = torch.cdist(points, other_centers).min(dim=1).values
+        inter_values.append(nearest_other.mean())
+
     intra = torch.stack(intra_values).mean() if intra_values else torch.tensor(float("nan"))
+    inter = torch.stack(inter_values).mean() if inter_values else torch.tensor(float("nan"))
     sep = inter - intra
     return {
         f"mintra_k{k}": float(intra.item()),
@@ -332,12 +337,11 @@ def fit_pca_projector(patch_tensors: Iterable[torch.Tensor]) -> PCAProjector:
     x = torch.cat(tensors, dim=0)
     mean = x.mean(dim=0, keepdim=True)
     centered = x - mean
-    try:
-        _, _, vectors = torch.pca_lowrank(centered, q=3)
-        basis = vectors[:, :3]
-    except Exception:
-        _, _, vh = torch.linalg.svd(centered, full_matrices=False)
-        basis = vh[:3].T
+    _, _, vh = torch.linalg.svd(centered, full_matrices=False)
+    basis = vh[:3].T
+    if basis.shape[1] < 3:
+        pad = torch.zeros(basis.shape[0], 3 - basis.shape[1], dtype=basis.dtype, device=basis.device)
+        basis = torch.cat([basis, pad], dim=1)
     projected = centered @ basis
     component_min = projected.min(dim=0).values
     component_max = projected.max(dim=0).values

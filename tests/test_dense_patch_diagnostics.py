@@ -73,6 +73,21 @@ def test_class_separability_detects_two_obvious_clusters():
     assert metrics["minter_k2"] > metrics["mintra_k2"]
 
 
+def test_class_separability_uses_paper_style_radius_and_inter_distance():
+    tokens = torch.tensor(
+        [
+            [[0.0, 0.0], [2.0, 0.0]],
+            [[10.0, 0.0], [12.0, 0.0]],
+        ]
+    )
+
+    metrics = class_separability(tokens, k=2, max_tokens=10)
+
+    assert metrics["mintra_k2"] == pytest.approx(2.0**0.5)
+    assert metrics["minter_k2"] == pytest.approx(10.0)
+    assert metrics["class_sep_k2"] == pytest.approx(10.0 - 2.0**0.5)
+
+
 def test_fixed_query_similarity_stats_has_expected_entropy_and_correlation():
     patches = torch.eye(4).reshape(1, 4, 4)
     stats = fixed_query_similarity_stats(
@@ -119,3 +134,18 @@ def test_fixed_pca_projector_uses_shared_basis_and_range():
     assert late_rgb.shape == (2, 2, 3)
     assert projector.basis.shape == (3, 3)
     assert not np.allclose(early_rgb, late_rgb)
+
+
+def test_pca_projector_does_not_use_randomized_pca_lowrank(monkeypatch):
+    calls = []
+
+    def fake_pca_lowrank(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("pca_lowrank should not be used for fixed-basis diagnostics")
+
+    monkeypatch.setattr(torch, "pca_lowrank", fake_pca_lowrank)
+
+    projector = fit_pca_projector([torch.eye(4)])
+
+    assert calls == []
+    assert projector.basis.shape == (4, 3)

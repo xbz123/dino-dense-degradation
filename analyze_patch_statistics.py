@@ -79,9 +79,41 @@ def build_transforms(image_size: int):
 
 
 def select_indices(dataset_size: int, num_images: int, seed: int) -> list[int]:
+    metric_indices, _ = select_metric_and_visual_indices(dataset_size, num_images, 0, seed)
+    return metric_indices
+
+
+def select_metric_and_visual_indices(
+    dataset_size: int,
+    num_metric_images: int,
+    num_vis_images: int,
+    seed: int,
+) -> tuple[list[int], list[int]]:
+    """Sample metric images reproducibly while preserving visual sample order."""
     rng = np.random.default_rng(seed)
-    count = min(num_images, dataset_size)
-    return sorted(rng.choice(dataset_size, size=count, replace=False).tolist())
+    count = min(num_metric_images, dataset_size)
+    sampled = rng.choice(dataset_size, size=count, replace=False).tolist()
+    metric_indices = sorted(sampled)
+    visual_indices = sampled[: min(num_vis_images, len(sampled))]
+    return metric_indices, visual_indices
+
+
+def build_fixed_image_manifest(dataset, visual_indices: list[int]) -> list[dict]:
+    """Describe the fixed images used for qualitative checkpoint comparisons."""
+    manifest = []
+    class_names = getattr(dataset, "classes", None)
+    for position, source_index in enumerate(visual_indices):
+        path, label = dataset.samples[source_index]
+        entry = {
+            "position": position,
+            "index": int(source_index),
+            "path": str(path),
+            "class_index": int(label),
+        }
+        if class_names and 0 <= int(label) < len(class_names):
+            entry["class_name"] = class_names[int(label)]
+        manifest.append(entry)
+    return manifest
 
 
 def query_points_for_grid(height: int, width: int) -> list[dict[str, int | str]]:
@@ -330,6 +362,11 @@ def analyze_checkpoint(
         f"load_state_dict missing={load_info['missing_keys']} unexpected={load_info['unexpected_keys']}",
         flush=True,
     )
+    epoch_warning = validate_internal_epoch(info.epoch, load_info["internal_epoch"])
+    if epoch_warning:
+        print(f"WARNING: {epoch_warning}", flush=True)
+        if args.strict_internal_epoch:
+            raise ValueError(epoch_warning)
 
     cls_tensor, patch_tensor, attention_tensor, height, width, saved_visuals, visual_records = extract_checkpoint_features(
         model=model,
@@ -343,11 +380,6 @@ def analyze_checkpoint(
     del model
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    epoch_warning = validate_internal_epoch(info.epoch, load_info["internal_epoch"])
-    if epoch_warning:
-        print(f"WARNING: {epoch_warning}", flush=True)
-        if args.strict_internal_epoch:
-            raise ValueError(epoch_warning)
 
     flat = patch_tensor.reshape(-1, patch_tensor.shape[-1])
     spec = spectrum_metrics(flat, max_tokens=args.max_spectrum_tokens)
@@ -497,8 +529,13 @@ def main():
     model_transform, raw_transform = build_transforms(args.image_size)
     dataset = datasets.ImageFolder(str(image_root), transform=model_transform)
     raw_dataset = datasets.ImageFolder(str(image_root), transform=raw_transform)
-    selected_indices = select_indices(len(dataset), args.num_metric_images, args.seed)
-    vis_indices = set(selected_indices[: min(args.num_vis_images, len(selected_indices))])
+    selected_indices, visual_indices = select_metric_and_visual_indices(
+        len(dataset),
+        args.num_metric_images,
+        args.num_vis_images,
+        args.seed,
+    )
+    vis_indices = set(visual_indices)
 
     indexed_subset = IndexedSubset(dataset, selected_indices)
     loader = DataLoader(
@@ -513,10 +550,11 @@ def main():
         **vars(args),
         "resolved_image_root": str(image_root),
         "selected_indices": selected_indices,
-        "visualized_indices": sorted(vis_indices),
+        "visualized_indices": visual_indices,
         "checkpoint_epochs": [item.epoch for item in checkpoints],
     }
     save_json(out / "config.json", config)
+    save_json(out / "fixed_images.json", build_fixed_image_manifest(raw_dataset, visual_indices))
     save_json(
         out / "checkpoint_manifest.json",
         [
@@ -533,7 +571,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"device: {device}", flush=True)
     print(f"metric images: {len(selected_indices)}", flush=True)
-    print(f"visualized indices: {sorted(vis_indices)}", flush=True)
+    print(f"visualized indices: {visual_indices}", flush=True)
 
     rows = []
     baseline_query_maps = None

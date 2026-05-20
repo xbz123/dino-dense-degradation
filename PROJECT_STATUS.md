@@ -85,10 +85,11 @@ feature collapse or CLS-patch homogenization.
 The Colab dense evaluation notebook now delegates patch-level analysis to
 standalone repository scripts so the workflow is easier to rerun and debug:
 
-- `analyze_patch_statistics.py` scans checkpoints and computes DSE-style class
-  separability, effective rank, covariance spectrum, CLS-patch cosine, patch
-  feature magnitude histograms, CLS attention statistics, fixed-query patch
-  similarity maps, and fixed-basis PCA maps of patch features.
+- `analyze_patch_statistics.py` scans checkpoints and computes paper-formula
+  DSE class separability, effective rank, covariance spectrum, CLS-patch cosine,
+  patch feature magnitude histograms, CLS attention statistics, fixed-query
+  patch similarity maps, and deterministic fixed-basis PCA maps of patch
+  features.
 - `plot_dense_diagnostics.py` merges VOC mIoU with structural diagnostics and
   writes the summary figure.
 - `make_summary_report.py` writes a compact Markdown report for each run.
@@ -99,10 +100,11 @@ segmentation, runs the patch diagnostic suite, and saves persistent outputs
 under a final-epoch directory such as
 `MyDrive/dino_dense_degradation_eval/to_epoch_0215/`.
 
-The diagnostic runner now records named query patch coordinates in
-`query_points.json`, saves one shared PCA basis for all fixed-image qualitative
-maps, and warns when a checkpoint filename epoch disagrees with the internal
-DINO checkpoint epoch metadata.
+The diagnostic runner now records fixed visual images in `fixed_images.json`,
+records named query patch coordinates in `query_points.json`, saves one shared
+deterministic PCA basis for all fixed-image qualitative maps, and validates
+checkpoint filename/internal epoch agreement before expensive feature
+extraction.
 
 ## Next Steps
 
@@ -112,7 +114,7 @@ Planned research and engineering work:
    mIoU curve.
 2. Compare dense evaluation results with logged diagnostics such as effective
    rank and CLS-patch cosine similarity.
-3. Compare VOC mIoU with the Colab notebook's DSE-style class separability,
+3. Compare VOC mIoU with the Colab notebook's DSE class separability,
    effective-rank, patch-statistic, and CLS-attention outputs.
 4. Add COCO-Stuff linear segmentation on selected checkpoints if VOC remains
    stable but structural diagnostics drift.
@@ -134,7 +136,7 @@ Planned research and engineering work:
 - `make_summary_report.py`: Markdown report generator for evaluation runs.
 - `eval_voc_dense.py`: PASCAL VOC dense evaluation script.
 - `notebooks/colab_dense_degradation_all_checkpoints.ipynb`: Colab workflow for
-  evaluating all Drive checkpoints and exporting mIoU, DSE-style metrics, and
+  evaluating all Drive checkpoints and exporting mIoU, DSE metrics, and
   qualitative patch/attention diagnostics.
 - `KAGGLE_GUIDE.md`: Kaggle training and resume workflow.
 - `README.md`: Project overview, features, and quick-start instructions.

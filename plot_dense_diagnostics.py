@@ -81,7 +81,7 @@ def main():
         ("effective_rank", "effective rank"),
     ]:
         plot_metric(axes[1], rows, metric, label)
-    axes[1].set_title("DSE-style structural metrics")
+    axes[1].set_title("DSE structural metrics")
     axes[1].set_xlabel("checkpoint epoch")
     axes[1].legend()
     axes[1].grid(alpha=0.3)
