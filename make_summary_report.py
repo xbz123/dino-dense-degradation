@@ -3,34 +3,10 @@
 from __future__ import annotations
 
 import argparse
-import csv
-import json
 import math
 from pathlib import Path
 
-
-def to_number(value):
-    if value is None or value == "":
-        return float("nan")
-    try:
-        if isinstance(value, str) and value.strip().isdigit():
-            return int(value)
-        return float(value)
-    except (TypeError, ValueError):
-        return value
-
-
-def read_csv_rows(path: str | Path) -> list[dict]:
-    with Path(path).open() as handle:
-        rows = [{key: to_number(value) for key, value in row.items()} for row in csv.DictReader(handle)]
-    return sorted(rows, key=lambda row: row["epoch"])
-
-
-def read_voc_results(path: str | Path | None) -> list[dict]:
-    if not path or not Path(path).is_file():
-        return []
-    with Path(path).open() as handle:
-        return sorted(json.load(handle), key=lambda row: row["epoch"])
+from dense_results_io import read_csv_rows, read_voc_results
 
 
 def fmt(value, digits=4):
@@ -104,7 +80,7 @@ def main():
     args = parser.parse_args()
 
     rows = read_csv_rows(args.summary_csv)
-    voc_rows = read_voc_results(args.voc_json)
+    voc_rows = read_voc_results(args.voc_json, as_rows=True)
 
     lines = [
         "# Dense Degradation Diagnostics Report",

@@ -21,6 +21,7 @@ class CheckpointInfo:
     size_mb: float
     priority: int
     mtime: float
+    epoch_warning: str | None = None
 
 
 def parse_checkpoint_epoch(name: str) -> int | None:
@@ -49,9 +50,24 @@ def _generic_checkpoint_epoch(path: Path) -> int | None:
     return max(0, internal_epoch - 1)
 
 
+def validate_internal_epoch(filename_epoch: int, internal_epoch: int | None) -> str | None:
+    """Return a warning if a checkpoint filename epoch disagrees with metadata."""
+    if internal_epoch is None:
+        return None
+    # DINO checkpoints usually store the next epoch to start from. Some older
+    # intermediate files may store the just-completed epoch, so accept both.
+    if internal_epoch in {filename_epoch, filename_epoch + 1}:
+        return None
+    return (
+        f"checkpoint filename epoch {filename_epoch} does not match "
+        f"internal epoch {internal_epoch}"
+    )
+
+
 def discover_checkpoint_files(
     checkpoint_dir: str | Path,
     epoch_filter: Iterable[int] | None = None,
+    read_internal_epochs: bool = False,
 ) -> list[CheckpointInfo]:
     """Discover all recognizable checkpoint files in a directory.
 
@@ -68,10 +84,12 @@ def discover_checkpoint_files(
 
         priority = 2
         epoch = parse_checkpoint_epoch(path.name)
+        generic_internal_epoch = None
         if epoch is None:
             if path.name != "checkpoint.pth":
                 continue
-            epoch = _generic_checkpoint_epoch(path)
+            generic_internal_epoch = read_checkpoint_internal_epoch(path)
+            epoch = max(0, generic_internal_epoch - 1) if generic_internal_epoch is not None else None
             priority = 1
             if epoch is None:
                 continue
@@ -79,7 +97,12 @@ def discover_checkpoint_files(
         if wanted is not None and epoch not in wanted:
             continue
 
-        internal_epoch = read_checkpoint_internal_epoch(path)
+        if generic_internal_epoch is not None:
+            internal_epoch = generic_internal_epoch
+        elif read_internal_epochs:
+            internal_epoch = read_checkpoint_internal_epoch(path)
+        else:
+            internal_epoch = None
         stat = path.stat()
         candidate = CheckpointInfo(
             epoch=epoch,
@@ -88,6 +111,7 @@ def discover_checkpoint_files(
             size_mb=stat.st_size / 1024 / 1024,
             priority=priority,
             mtime=stat.st_mtime,
+            epoch_warning=validate_internal_epoch(epoch, internal_epoch),
         )
         current = discovered.get(epoch)
         if current is None or (candidate.priority, candidate.mtime) > (

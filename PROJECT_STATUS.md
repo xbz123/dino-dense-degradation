@@ -88,7 +88,7 @@ standalone repository scripts so the workflow is easier to rerun and debug:
 - `analyze_patch_statistics.py` scans checkpoints and computes DSE-style class
   separability, effective rank, covariance spectrum, CLS-patch cosine, patch
   feature magnitude histograms, CLS attention statistics, fixed-query patch
-  similarity maps, and PCA maps of patch features.
+  similarity maps, and fixed-basis PCA maps of patch features.
 - `plot_dense_diagnostics.py` merges VOC mIoU with structural diagnostics and
   writes the summary figure.
 - `make_summary_report.py` writes a compact Markdown report for each run.
@@ -98,6 +98,11 @@ normalizes checkpoint filenames into a runtime directory, runs VOC linear
 segmentation, runs the patch diagnostic suite, and saves persistent outputs
 under a final-epoch directory such as
 `MyDrive/dino_dense_degradation_eval/to_epoch_0215/`.
+
+The diagnostic runner now records named query patch coordinates in
+`query_points.json`, saves one shared PCA basis for all fixed-image qualitative
+maps, and warns when a checkpoint filename epoch disagrees with the internal
+DINO checkpoint epoch metadata.
 
 ## Next Steps
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import math
 import os
 import tempfile
@@ -16,30 +15,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-
-def to_number(value):
-    if value is None or value == "":
-        return float("nan")
-    try:
-        if isinstance(value, str) and value.strip().isdigit():
-            return int(value)
-        return float(value)
-    except (TypeError, ValueError):
-        return value
-
-
-def read_csv_rows(path: str | Path) -> list[dict]:
-    with Path(path).open() as handle:
-        rows = [{key: to_number(value) for key, value in row.items()} for row in csv.DictReader(handle)]
-    return sorted(rows, key=lambda row: row["epoch"])
-
-
-def read_voc_results(path: str | Path | None) -> dict[int, float]:
-    if not path or not Path(path).is_file():
-        return {}
-    with Path(path).open() as handle:
-        payload = json.load(handle)
-    return {int(row["epoch"]): float(row["miou"]) for row in payload}
+from dense_results_io import read_csv_rows, read_voc_results
 
 
 def metric_values(rows: list[dict], metric: str) -> list[float]:

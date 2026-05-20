@@ -10,6 +10,7 @@ from dense_eval_utils import (
     build_run_output_root,
     discover_checkpoint_files,
     parse_checkpoint_epoch,
+    validate_internal_epoch,
 )
 
 
@@ -44,7 +45,25 @@ def test_discover_checkpoint_files_sorts_filters_and_prefers_named_files(tmp_pat
         "checkpoint0200.pth",
         "checkpoint215.pth",
     ]
-    assert discovered[-1].internal_epoch == 216
+    assert discovered[-1].internal_epoch is None
+
+
+def test_discover_checkpoint_files_can_read_internal_epochs_when_requested(tmp_path):
+    _write_checkpoint(tmp_path / "checkpoint0215.pth", 216)
+
+    discovered = discover_checkpoint_files(tmp_path, read_internal_epochs=True)
+
+    assert discovered[0].epoch == 215
+    assert discovered[0].internal_epoch == 216
+
+
+def test_discover_checkpoint_files_does_not_load_named_checkpoints_by_default(tmp_path):
+    (tmp_path / "checkpoint0215.pth").write_bytes(b"not a torch checkpoint")
+
+    discovered = discover_checkpoint_files(tmp_path)
+
+    assert discovered[0].epoch == 215
+    assert discovered[0].internal_epoch is None
 
 
 def test_discover_checkpoint_files_can_filter_epochs(tmp_path):
@@ -60,3 +79,15 @@ def test_build_run_output_root_uses_final_checkpoint_epoch(tmp_path):
     output = build_run_output_root(tmp_path, [3, 20, 215])
 
     assert output == tmp_path / "to_epoch_0215"
+
+
+def test_validate_internal_epoch_accepts_dino_next_epoch_convention():
+    assert validate_internal_epoch(215, 216) is None
+    assert validate_internal_epoch(215, 215) is None
+
+
+def test_validate_internal_epoch_warns_on_mismatch():
+    warning = validate_internal_epoch(215, 171)
+
+    assert "filename epoch 215" in warning
+    assert "internal epoch 171" in warning

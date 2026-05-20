@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 import math
 from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
@@ -18,6 +19,16 @@ import torch
 import torch.nn.functional as F
 
 import vision_transformer as vits
+
+
+@dataclass(frozen=True)
+class PCAProjector:
+    """Fixed PCA projection and color range for comparable visual maps."""
+
+    mean: torch.Tensor
+    basis: torch.Tensor
+    component_min: torch.Tensor
+    component_max: torch.Tensor
 
 
 def clean_state_dict(state_dict: dict[str, torch.Tensor]) -> OrderedDict[str, torch.Tensor]:
@@ -313,17 +324,43 @@ def normalize01(array) -> np.ndarray:
     return (array - float(array.min())) / span
 
 
-def pca_rgb(patches: torch.Tensor, height: int, width: int) -> np.ndarray:
-    """Project patch features to a 3-channel PCA visualization."""
-    x = patches.float() - patches.float().mean(dim=0, keepdim=True)
+def fit_pca_projector(patch_tensors: Iterable[torch.Tensor]) -> PCAProjector:
+    """Fit one PCA basis and RGB range for a set of patch feature maps."""
+    tensors = [tensor.reshape(-1, tensor.shape[-1]).float() for tensor in patch_tensors]
+    if not tensors:
+        raise ValueError("Cannot fit PCA projector without patch tensors")
+    x = torch.cat(tensors, dim=0)
+    mean = x.mean(dim=0, keepdim=True)
+    centered = x - mean
     try:
-        _, _, vectors = torch.pca_lowrank(x, q=3)
-        y = x @ vectors[:, :3]
+        _, _, vectors = torch.pca_lowrank(centered, q=3)
+        basis = vectors[:, :3]
     except Exception:
-        _, _, vh = torch.linalg.svd(x, full_matrices=False)
-        y = x @ vh[:3].T
-    y = y.reshape(height, width, 3).cpu().numpy()
-    return normalize01(y)
+        _, _, vh = torch.linalg.svd(centered, full_matrices=False)
+        basis = vh[:3].T
+    projected = centered @ basis
+    component_min = projected.min(dim=0).values
+    component_max = projected.max(dim=0).values
+    return PCAProjector(
+        mean=mean.cpu(),
+        basis=basis.cpu(),
+        component_min=component_min.cpu(),
+        component_max=component_max.cpu(),
+    )
+
+
+def project_pca_rgb(
+    patches: torch.Tensor,
+    projector: PCAProjector,
+    height: int,
+    width: int,
+) -> np.ndarray:
+    """Apply a fixed PCA projector to one patch feature map and return RGB."""
+    x = patches.reshape(-1, patches.shape[-1]).float().cpu()
+    y = (x - projector.mean) @ projector.basis
+    span = (projector.component_max - projector.component_min).clamp_min(1e-6)
+    y = (y - projector.component_min) / span
+    return y.clamp(0, 1).reshape(height, width, 3).numpy()
 
 
 def write_rows_csv(path: str | Path, rows: list[dict]) -> None:

@@ -12,8 +12,10 @@ from dense_patch_diagnostics import (
     attention_stats,
     class_separability,
     cls_patch_cosine_stats,
+    fit_pca_projector,
     fixed_query_similarity_stats,
     normalize01,
+    project_pca_rgb,
     spectrum_metrics,
 )
 
@@ -96,3 +98,24 @@ def test_normalize01_handles_constant_arrays():
 
     assert out.shape == (2, 2)
     assert np.all(out == 0.0)
+
+
+def test_fixed_pca_projector_uses_shared_basis_and_range():
+    early = torch.tensor(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+        ]
+    )
+    late = early + torch.tensor([2.0, 0.0, 0.0])
+
+    projector = fit_pca_projector([early, late])
+    early_rgb = project_pca_rgb(early, projector, 2, 2)
+    late_rgb = project_pca_rgb(late, projector, 2, 2)
+
+    assert early_rgb.shape == (2, 2, 3)
+    assert late_rgb.shape == (2, 2, 3)
+    assert projector.basis.shape == (3, 3)
+    assert not np.allclose(early_rgb, late_rgb)

@@ -28,17 +28,18 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from dense_eval_utils import discover_checkpoint_files
+from dense_eval_utils import discover_checkpoint_files, validate_internal_epoch
 from dense_patch_diagnostics import (
     attention_stats,
     class_separability,
     cls_patch_cosine_stats,
     covariance_spectrum,
+    fit_pca_projector,
     fixed_query_similarity_stats,
     load_vit_backbone,
     normalize01,
     patch_norm_stats,
-    pca_rgb,
+    project_pca_rgb,
     spectrum_metrics,
     write_rows_csv,
 )
@@ -83,15 +84,25 @@ def select_indices(dataset_size: int, num_images: int, seed: int) -> list[int]:
     return sorted(rng.choice(dataset_size, size=count, replace=False).tolist())
 
 
-def query_indices_for_grid(height: int, width: int) -> list[int]:
+def query_points_for_grid(height: int, width: int) -> list[dict[str, int | str]]:
+    """Return fixed named query points for comparable similarity maps."""
     coords = [
-        (height // 2, width // 2),
-        (height // 4, width // 4),
-        (height // 4, 3 * width // 4),
-        (3 * height // 4, width // 4),
-        (3 * height // 4, 3 * width // 4),
+        ("center", height // 2, width // 2),
+        ("upper_left", height // 4, width // 4),
+        ("upper_right", height // 4, 3 * width // 4),
+        ("lower_left", 3 * height // 4, width // 4),
+        ("lower_right", 3 * height // 4, 3 * width // 4),
     ]
-    return sorted({min(height - 1, r) * width + min(width - 1, c) for r, c in coords})
+    points = []
+    for name, row, col in coords:
+        row = min(height - 1, max(0, row))
+        col = min(width - 1, max(0, col))
+        points.append({"name": name, "row": row, "col": col, "index": row * width + col})
+    return points
+
+
+def query_indices_for_grid(height: int, width: int) -> list[int]:
+    return [int(point["index"]) for point in query_points_for_grid(height, width)]
 
 
 def save_overlay(path: Path, image: Image.Image, heat, title: str, cmap: str = "magma") -> None:
@@ -163,6 +174,7 @@ def extract_checkpoint_features(
     all_patches = []
     all_attn = []
     saved_visuals = []
+    visual_records = []
     height = width = None
 
     for batch_images, _, batch_positions in loader:
@@ -190,10 +202,7 @@ def extract_checkpoint_features(
             attn_map = cls_attention[batch_index].detach().cpu().float().reshape(height, width)
             patch_norm = patch.norm(dim=-1).reshape(height, width)
             cls_cos = (F.normalize(patch, dim=-1) @ F.normalize(cls, dim=-1)).reshape(height, width)
-            center_query = (height // 2) * width + (width // 2)
-            sim_map = (
-                F.normalize(patch, dim=-1) @ F.normalize(patch[center_query], dim=-1)
-            ).reshape(height, width)
+            patch_normed = F.normalize(patch, dim=-1)
 
             tag = f"img{position:04d}_idx{source_index}"
             raw_image.save(epoch_dir / f"{tag}_original.png")
@@ -212,14 +221,16 @@ def extract_checkpoint_features(
                 "patch cosine to CLS",
                 "viridis",
             )
-            save_overlay(
-                epoch_dir / f"{tag}_query_center_similarity.png",
-                raw_image,
-                sim_map,
-                "center-patch similarity",
-                "cividis",
-            )
-            plt.imsave(epoch_dir / f"{tag}_pca_patch_features.png", pca_rgb(patch, height, width))
+            for point in query_points_for_grid(height, width):
+                query_index = int(point["index"])
+                sim_map = (patch_normed @ patch_normed[query_index]).reshape(height, width)
+                save_overlay(
+                    epoch_dir / f"{tag}_query_{point['name']}_similarity.png",
+                    raw_image,
+                    sim_map,
+                    f"{point['name']} patch similarity",
+                    "cividis",
+                )
             save_histogram_png(
                 epoch_dir / f"{tag}_patch_norm_hist.png",
                 patch_norm,
@@ -239,11 +250,21 @@ def extract_checkpoint_features(
                 "cosine",
             )
             saved_visuals.append(tag)
+            visual_records.append(
+                {
+                    "tag": tag,
+                    "source_index": source_index,
+                    "patches": patch,
+                    "height": height,
+                    "width": width,
+                    "epoch_dir": epoch_dir,
+                }
+            )
 
     cls_tensor = torch.cat(all_cls, dim=0).float()
     patch_tensor = torch.cat(all_patches, dim=0).float()
     attention_tensor = torch.cat(all_attn, dim=0).float()
-    return cls_tensor, patch_tensor, attention_tensor, height, width, saved_visuals
+    return cls_tensor, patch_tensor, attention_tensor, height, width, saved_visuals, visual_records
 
 
 def compute_dse_components(
@@ -310,7 +331,7 @@ def analyze_checkpoint(
         flush=True,
     )
 
-    cls_tensor, patch_tensor, attention_tensor, height, width, saved_visuals = extract_checkpoint_features(
+    cls_tensor, patch_tensor, attention_tensor, height, width, saved_visuals, visual_records = extract_checkpoint_features(
         model=model,
         loader=loader,
         raw_dataset=raw_dataset,
@@ -322,6 +343,11 @@ def analyze_checkpoint(
     del model
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+    epoch_warning = validate_internal_epoch(info.epoch, load_info["internal_epoch"])
+    if epoch_warning:
+        print(f"WARNING: {epoch_warning}", flush=True)
+        if args.strict_internal_epoch:
+            raise ValueError(epoch_warning)
 
     flat = patch_tensor.reshape(-1, patch_tensor.shape[-1])
     spec = spectrum_metrics(flat, max_tokens=args.max_spectrum_tokens)
@@ -357,6 +383,7 @@ def analyze_checkpoint(
         "checkpoint_size_mb": info.size_mb,
         "internal_epoch": load_info["internal_epoch"],
         "network_key": load_info["source"],
+        "epoch_warning": epoch_warning or "",
         "num_metric_images": len(selected_indices),
         "num_visualized_images": len(saved_visuals),
         "grid_height": height,
@@ -373,7 +400,45 @@ def analyze_checkpoint(
 
     save_json(epoch_dir / "metrics_pre_dse.json", jsonable_metric_row(row))
     print(json.dumps(jsonable_metric_row(row), indent=2), flush=True)
-    return jsonable_metric_row(row), query_maps if baseline_query_maps is None else baseline_query_maps
+    return (
+        jsonable_metric_row(row),
+        query_maps if baseline_query_maps is None else baseline_query_maps,
+        visual_records,
+    )
+
+
+def save_fixed_basis_pca_maps(visual_records_by_epoch: dict[int, list[dict]], out: Path) -> None:
+    """Fit one PCA basis over all fixed-image records and save comparable maps."""
+    records = [record for records in visual_records_by_epoch.values() for record in records]
+    if not records:
+        return
+    projector = fit_pca_projector([record["patches"] for record in records])
+    torch.save(
+        {
+            "mean": projector.mean,
+            "basis": projector.basis,
+            "component_min": projector.component_min,
+            "component_max": projector.component_max,
+        },
+        out / "pca_fixed_basis.pt",
+    )
+    save_json(
+        out / "pca_fixed_basis_config.json",
+        {
+            "epochs": sorted(visual_records_by_epoch),
+            "num_fixed_maps": len(records),
+            "basis": "fit once from all visualized fixed-image patch features",
+        },
+    )
+    for records in visual_records_by_epoch.values():
+        for record in records:
+            rgb = project_pca_rgb(
+                record["patches"],
+                projector,
+                int(record["height"]),
+                int(record["width"]),
+            )
+            plt.imsave(record["epoch_dir"] / f"{record['tag']}_pca_fixed_basis.png", rgb)
 
 
 def add_dse_scores(rows: list[dict]) -> list[dict]:
@@ -412,6 +477,7 @@ def parse_args():
     parser.add_argument("--query_temperature", type=float, default=0.07)
     parser.add_argument("--top_eigenvalues", type=int, default=32)
     parser.add_argument("--epoch_filter", nargs="*", type=int, default=None)
+    parser.add_argument("--strict_internal_epoch", action="store_true")
     return parser.parse_args()
 
 
@@ -471,8 +537,9 @@ def main():
 
     rows = []
     baseline_query_maps = None
+    visual_records_by_epoch = {}
     for info in checkpoints:
-        row, baseline_query_maps = analyze_checkpoint(
+        row, baseline_query_maps, visual_records = analyze_checkpoint(
             info,
             args,
             loader,
@@ -483,7 +550,16 @@ def main():
             device,
         )
         rows.append(row)
+        visual_records_by_epoch[info.epoch] = visual_records
 
+    save_fixed_basis_pca_maps(visual_records_by_epoch, out)
+    if visual_records_by_epoch:
+        first_records = next(iter(visual_records_by_epoch.values()))
+        if first_records:
+            save_json(
+                out / "query_points.json",
+                query_points_for_grid(int(first_records[0]["height"]), int(first_records[0]["width"])),
+            )
     rows = add_dse_scores(rows)
     write_rows_csv(out / "patch_attention_dse_summary.csv", rows)
     save_json(out / "patch_attention_dse_summary.json", rows)
