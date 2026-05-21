@@ -59,8 +59,8 @@ COMMON_ARGS="
     --data_path ${DATA_DIR}/train
     --val_data_path ${DATA_DIR}/val
     --output_dir ${OUTPUT_DIR}
-    --saveckp_freq 20
-    --keep_last_ckpts 3
+    --saveckp_freq 10
+    --keep_last_ckpts 0
     --diag_every 5
     --attn_viz_every 25
     --use_fp16 true

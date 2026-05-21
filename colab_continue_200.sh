@@ -159,7 +159,7 @@ torchrun --nproc_per_node=1 main_dino.py \
     --output_dir "${OUTPUT_DIR}" \
     --resume_from "${RESUME_CKPT}" \
     --saveckp_freq 10 \
-    --keep_last_ckpts 5 \
+    --keep_last_ckpts 0 \
     --diag_every 5 \
     --attn_viz_every 25 \
     --use_fp16 true \

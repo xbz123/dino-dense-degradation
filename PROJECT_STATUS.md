@@ -30,11 +30,14 @@ Completed work:
   `KAGGLE_GUIDE.md`.
 - Configured training to write the latest checkpoint to
   `dino_output/checkpoint.pth` and periodic historical checkpoints such as
-  `dino_output/checkpoint0020.pth`.
+  `dino_output/checkpoint0010.pth`.
 - Updated checkpoint loading for PyTorch 2.6+ compatibility where
   `torch.load` defaults to `weights_only=True`.
 - Removed a distributed startup issue caused by evaluating `torch.hub.list`
   during argument parsing.
+- Updated the Kaggle and Colab resume examples to use `--resume_from` directly,
+  save periodic checkpoints every 10 epochs, and preserve all periodic
+  checkpoints for later dense-degradation sweeps.
 
 ### Dense Evaluation Workflow
 
@@ -105,6 +108,29 @@ records named query patch coordinates in `query_points.json`, saves one shared
 deterministic PCA basis for all fixed-image qualitative maps, and validates
 checkpoint filename/internal epoch agreement before expensive feature
 extraction.
+
+### Repository Review Status
+
+Current validation coverage:
+
+- Unit tests cover checkpoint discovery, resume-path wiring, Colab notebook
+  script references, shared CSV/JSON readers, DSE component calculations,
+  fixed-query similarity metrics, and deterministic fixed-basis PCA.
+- Syntax checks cover the Python entry points and notebook JSON structure.
+- The public documentation avoids committing local checkpoints, datasets,
+  generated figures, and reference PDFs.
+
+Known limitations:
+
+- `eval_voc_dense.py` is a lightweight frozen-backbone VOC linear-probing
+  runner for trend analysis, not a full reproduction of every downstream
+  setting in the SDD paper.
+- COCO-Stuff, ADE20K, and Cityscapes linear segmentation are still future work;
+  current downstream evidence is centered on PASCAL VOC plus structural
+  diagnostics.
+- Full Colab/Kaggle runs depend on external data, checkpoints, and GPU runtime,
+  so local tests validate code paths and configuration wiring rather than
+  reproducing a complete GPU sweep.
 
 ## Next Steps
 

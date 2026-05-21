@@ -5,7 +5,7 @@ This script evaluates DINO checkpoints on PASCAL VOC 2012 semantic segmentation
 using the standard linear evaluation protocol (frozen backbone + 1x1 conv head).
 
 Usage (on Colab):
-    !python eval_voc_dense.py --ckpt_dir /content/drive/MyDrive/dino_checkpoints
+    !python eval_voc_dense.py --ckpt_dir /content/drive/MyDrive/dinocheckpoint
 
 The script will:
 1. Download PASCAL VOC 2012 automatically
@@ -395,7 +395,7 @@ def discover_checkpoints(ckpt_dir):
         raise FileNotFoundError(
             f"Checkpoint directory does not exist: {ckpt_dir}{hint}\n"
             "Pass the correct folder with --ckpt_dir, for example:\n"
-            "  --ckpt_dir /content/drive/MyDrive/dinocehckpoint"
+            "  --ckpt_dir /content/drive/MyDrive/dinocheckpoint"
         )
 
     ckpt_files = []

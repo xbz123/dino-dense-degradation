@@ -38,47 +38,37 @@
 
 > ⚠️ 必须先 `%cd /kaggle/working`，否则删除 dino 文件夹后 shell 会找不到当前目录而报错。
 
-### Cell 2：修复 PyTorch 2.6 兼容性
-
-Kaggle 使用 PyTorch 2.6+，其 `torch.load` 默认开启了 `weights_only=True`，会导致加载 checkpoint 时报错。运行以下代码自动修复：
+### Cell 2：确认当前代码版本
 
 ```python
-path = '/kaggle/working/dino/utils.py'
-with open(path, 'r') as f:
-    code = f.read()
-code = code.replace(
-    'torch.load(ckp_path, map_location="cpu")',
-    'torch.load(ckp_path, map_location="cpu", weights_only=False)'
-)
-code = code.replace(
-    'torch.load(pretrained_weights, map_location="cpu")',
-    'torch.load(pretrained_weights, map_location="cpu", weights_only=False)'
-)
-with open(path, 'w') as f:
-    f.write(code)
-print("utils.py 已修复！")
+%cd /kaggle/working/dino
+!git rev-parse HEAD
+!python -m py_compile main_dino.py utils.py dense_diagnostics.py
 ```
 
-### Cell 3：准备断点续训
+当前仓库已经在 `utils.py` 和评估脚本中使用 `torch.load(..., weights_only=False)`，不需要再在 Kaggle Notebook 里手动修改源码。
+
+### Cell 3：设置断点续训路径
 
 ```python
 import os
-import shutil
 
 output_dir = '/kaggle/working/dino_output'
 os.makedirs(output_dir, exist_ok=True)
 
-# 如果你挂载了历史 checkpoint，请将下面的路径替换为实际的挂载路径
-# 例如: '/kaggle/input/dino-kpt/checkpoint.pth'
-# 如果是第一次从头开始跑，这段代码会自动跳过
-old_ckpt_path = '/kaggle/input/dino_kpt/checkpoint.pth'
+# 如果你挂载了上一轮 Notebook Output 或 checkpoint Dataset，请把这里改成实际路径。
+# 示例：
+#   '/kaggle/input/dino-train-v2/dino_output/checkpoint.pth'
+#   '/kaggle/input/dino-ckp/checkpoint0180.pth'
+# 第一次从头训练时保留为空字符串。
+resume_ckpt = ''
 
-if os.path.exists(old_ckpt_path):
-    print("找到历史进度，正在复制...")
-    shutil.copy(old_ckpt_path, os.path.join(output_dir, 'checkpoint.pth'))
-    print("复制完成！")
+if resume_ckpt and os.path.exists(resume_ckpt):
+    resume_from_arg = f'--resume_from {resume_ckpt}'
+    print('Resume checkpoint:', resume_ckpt)
 else:
-    print("未找到历史进度，将从 Epoch 0 全新开始。")
+    resume_from_arg = ''
+    print('No resume checkpoint configured; training will start from output_dir/checkpoint.pth if it exists, otherwise epoch 0.')
 ```
 
 ### Cell 4：确认数据路径（可选，首次运行建议执行）
@@ -107,8 +97,9 @@ print(f"Val classes: {len(os.listdir(val_path))}")
     --data_path /kaggle/input/datasets/wilyzh/imagenet100/ImageNet100/train \
     --val_data_path /kaggle/input/datasets/wilyzh/imagenet100/ImageNet100/val \
     --output_dir /kaggle/working/dino_output \
-    --saveckp_freq 20 \
-    --keep_last_ckpts 3 \
+    {resume_from_arg} \
+    --saveckp_freq 10 \
+    --keep_last_ckpts 0 \
     --diag_every 5 \
     --attn_viz_every 25 \
     --use_fp16 true \
@@ -121,6 +112,9 @@ print(f"Val classes: {len(os.listdir(val_path))}")
 **参数说明：**
 - `--nproc_per_node=2`：使用 2 张 T4 GPU 并行训练
 - `--batch_size_per_gpu 64 × 2卡 × --accum_steps 2 = 256` 等效批次大小
+- `--resume_from`：直接读取挂载的历史 checkpoint；不需要复制覆盖 `/kaggle/working/dino_output/checkpoint.pth`
+- `--saveckp_freq 10`：每 10 个 epoch 保存一次历史 checkpoint
+- `--keep_last_ckpts 0`：保留所有历史 checkpoint，便于后续 dense degradation sweep
 - `--local_crops_number 4`：减少到 4 个局部裁切（节省约 25% 计算）
 - `--diag_every 5`：每 5 个 epoch 运行一次稠密退化诊断
 - 显存占用约 9.6 GB / 16 GB，每 epoch 约 40 分钟
@@ -142,11 +136,11 @@ print(f"Val classes: {len(os.listdir(val_path))}")
 
 12 个小时后（或第二天）：
 
-1. 打开你的 Notebook，在 **`Output`** 标签页找到 `dino_output/checkpoint.pth`
+1. 打开你的 Notebook，在 **`Output`** 标签页找到 `dino_output/checkpoint.pth` 或最新的 `dino_output/checkpointXXXX.pth`
 2. **开启下一轮**：
    - 点击 `Edit` 回到编辑界面
    - 点击右侧 `+ Add Input` → 选择 `Your Work` → 挂载你**自己上一轮的 Notebook**
-   - 把 Cell 3 里的 `old_ckpt_path` 改成新挂载的路径（通常是 `/kaggle/input/你的notebook名/dino_output/checkpoint.pth`）
+   - 把 Cell 3 里的 `resume_ckpt` 改成新挂载的路径（通常是 `/kaggle/input/你的notebook名/dino_output/checkpoint.pth`，也可以选择最新的 `checkpointXXXX.pth`）
    - 再次 `Save Version` → `Save & Run All`，开始新的 12 小时挂机
 
 ---

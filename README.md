@@ -28,10 +28,11 @@ Enables training on small GPUs (e.g., T4 16GB) by accumulating gradients over mu
 --batch_size_per_gpu 32 --accum_steps 8  # effective batch size = 256
 ```
 
-### 3. Checkpoint Management (`--keep_last_ckpts`)
-Automatically cleans up old periodic checkpoints to prevent disk space exhaustion:
+### 3. Checkpoint Management (`--saveckp_freq`, `--keep_last_ckpts`)
+Save periodic checkpoints for dense-degradation sweeps. The current evaluation
+workflow expects historical checkpoints every 10 epochs and keeps them all:
 ```bash
---keep_last_ckpts 3  # keep only the 3 most recent periodic checkpoints
+--saveckp_freq 10 --keep_last_ckpts 0
 ```
 
 ## Quick Start (Google Colab)
@@ -68,8 +69,8 @@ python main_dino.py \
     --data_path /content/imagenet100/train \
     --val_data_path /content/imagenet100/val \
     --output_dir /content/drive/MyDrive/dino_in100_baseline \
-    --saveckp_freq 20 \
-    --keep_last_ckpts 3 \
+    --saveckp_freq 10 \
+    --keep_last_ckpts 0 \
     --diag_every 10 \
     --attn_viz_every 50 \
     --use_fp16 true \
@@ -149,7 +150,7 @@ MyDrive/dino_dense_degradation_eval/to_epoch_XXXX/
 | `--attn_viz_every` | `50` | Save attention maps every N epochs |
 | `--diag_num_batches` | `50` | Validation batches for diagnostics |
 | `--accum_steps` | `1` | Gradient accumulation steps |
-| `--keep_last_ckpts` | `0` | Keep last N checkpoints (0=all) |
+| `--keep_last_ckpts` | `0` | Keep last N periodic checkpoints; `0` keeps all |
 
 ## Expected Observations
 
@@ -185,9 +186,9 @@ With `--teacher_temp 0.09`, the degradation onset should shift ~100 epochs earli
 ```
 output_dir/
 ├── checkpoint.pth                    # latest checkpoint (always kept)
-├── checkpoint0000.pth               # periodic checkpoint
+├── checkpoint0000.pth                # periodic checkpoint
+├── checkpoint0010.pth
 ├── checkpoint0020.pth
-├── checkpoint0040.pth
 ├── log.txt                           # training log (JSON lines)
 ├── attention_epoch0000/              # attention maps
 │   ├── attn_img00042.png
