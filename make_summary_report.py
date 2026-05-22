@@ -58,7 +58,7 @@ def diagnostics_section(rows: list[dict]) -> list[str]:
         return ["## Structural Diagnostics", "", "No patch diagnostic rows were found."]
     first = rows[0]
     last = rows[-1]
-    return [
+    lines = [
         "## Structural Diagnostics",
         "",
         f"- Checkpoint range: epoch {int(first['epoch'])} to epoch {int(last['epoch'])}",
@@ -70,6 +70,23 @@ def diagnostics_section(rows: list[dict]) -> list[str]:
         f"- Patch norm mean: {delta(first, last, 'patch_norm_mean')}",
         f"- Query similarity entropy: {delta(first, last, 'query_sim_entropy_mean')}",
     ]
+    if "raw_dse" in first and "l2_dse" in first:
+        lines.extend(
+            [
+                "",
+                "### Raw vs L2 Structural Tracks",
+                "",
+                f"- Raw DSE: {delta(first, last, 'raw_dse')}",
+                f"- L2 DSE: {delta(first, last, 'l2_dse')}",
+                f"- Raw class separability: {delta(first, last, 'raw_class_sep_avg')}",
+                f"- L2 class separability: {delta(first, last, 'l2_class_sep_avg')}",
+                f"- Raw effective rank: {delta(first, last, 'raw_effective_rank')}",
+                f"- L2 effective rank: {delta(first, last, 'l2_effective_rank')}",
+                f"- Raw top-1 eigenvalue ratio: {delta(first, last, 'raw_top1_eigen_ratio')}",
+                f"- L2 top-1 eigenvalue ratio: {delta(first, last, 'l2_top1_eigen_ratio')}",
+            ]
+        )
+    return lines
 
 
 def main():
@@ -97,13 +114,14 @@ def main():
         "",
         "## Interpretation",
         "",
-        "Use this report as a compact checkpoint summary. VOC mIoU is downstream evidence, while DSE, effective rank, CLS-patch cosine, attention concentration, and fixed-query similarity are structural diagnostics. If VOC is stable but structural metrics drift, the current setup may show representation changes before downstream degradation becomes visible.",
+        "Use this report as a compact checkpoint summary. VOC mIoU is downstream evidence. Raw DSE, class separability, and covariance metrics are Euclidean/covariance diagnostics on final-LayerNorm patch tokens and can be confounded by patch feature norm drift. L2-normalized tracks are the stronger check for angular patch-geometry degradation. CLS-patch cosine and fixed-query similarity are already L2-normalized diagnostics.",
         "",
         "## Key Outputs",
         "",
         "- `patch_attention_dse_summary.csv`: per-checkpoint structural metrics.",
         "- `combined_dense_summary.csv`: patch diagnostics merged with VOC mIoU when available.",
         "- `fig_dense_diagnostics_summary.png`: summary curves.",
+        "- `fig_raw_vs_l2_dse.png`, `fig_raw_vs_l2_class_sep.png`, and `fig_raw_vs_l2_spectrum.png`: raw/L2 validation curves.",
         "- `epoch_XXXX/`: fixed-image PCA maps, CLS attention maps, patch norm maps, CLS similarity maps, query similarity maps, and histograms.",
     ]
 

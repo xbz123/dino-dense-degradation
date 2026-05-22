@@ -123,9 +123,12 @@ def discover_checkpoint_files(
     return [discovered[epoch] for epoch in sorted(discovered)]
 
 
-def build_run_output_root(output_root: str | Path, epochs: Iterable[int]) -> Path:
+def build_run_output_root(output_root: str | Path, epochs: Iterable[int], suffix: str | None = None) -> Path:
     """Build the per-run output directory name from the largest epoch."""
     epochs = list(epochs)
     if not epochs:
         raise ValueError("Cannot build output root without checkpoint epochs")
-    return Path(output_root) / f"to_epoch_{max(epochs):04d}"
+    name = f"to_epoch_{max(epochs):04d}"
+    if suffix:
+        name = f"{name}_{suffix}"
+    return Path(output_root) / name

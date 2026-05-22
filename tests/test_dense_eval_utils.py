@@ -81,6 +81,12 @@ def test_build_run_output_root_uses_final_checkpoint_epoch(tmp_path):
     assert output == tmp_path / "to_epoch_0215"
 
 
+def test_build_run_output_root_accepts_analysis_suffix(tmp_path):
+    output = build_run_output_root(tmp_path, [3, 20, 215], suffix="raw_l2")
+
+    assert output == tmp_path / "to_epoch_0215_raw_l2"
+
+
 def test_validate_internal_epoch_accepts_dino_next_epoch_convention():
     assert validate_internal_epoch(215, 216) is None
     assert validate_internal_epoch(215, 215) is None

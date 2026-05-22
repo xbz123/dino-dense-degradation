@@ -47,6 +47,77 @@ def write_combined_summary(path: Path, rows: list[dict], voc_by_epoch: dict[int,
             writer.writerow(combined)
 
 
+def plot_raw_l2_figures(rows: list[dict], out_dir: str | Path) -> list[Path]:
+    """Write focused raw-vs-L2 diagnostic figures when both tracks exist."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written = []
+
+    specs = [
+        (
+            "fig_raw_vs_l2_dse.png",
+            "Raw vs L2 DSE",
+            [("raw_dse", "raw DSE"), ("l2_dse", "L2 DSE")],
+            "DSE",
+        ),
+        (
+            "fig_raw_vs_l2_class_sep.png",
+            "Raw vs L2 class separability",
+            [("raw_class_sep_avg", "raw class sep"), ("l2_class_sep_avg", "L2 class sep")],
+            "M_inter - M_intra",
+        ),
+    ]
+
+    for filename, title, metrics, ylabel in specs:
+        fig, axis = plt.subplots(figsize=(7, 4))
+        any_metric = False
+        for metric, label in metrics:
+            any_metric = plot_metric(axis, rows, metric, label) or any_metric
+        if not any_metric:
+            plt.close(fig)
+            continue
+        axis.set_title(title)
+        axis.set_xlabel("checkpoint epoch")
+        axis.set_ylabel(ylabel)
+        axis.legend()
+        axis.grid(alpha=0.3)
+        fig.tight_layout()
+        path = out_dir / filename
+        fig.savefig(path, dpi=180)
+        plt.close(fig)
+        written.append(path)
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+    any_left = False
+    for metric, label in [
+        ("raw_effective_rank", "raw effective rank"),
+        ("l2_effective_rank", "L2 effective rank"),
+    ]:
+        any_left = plot_metric(axes[0], rows, metric, label) or any_left
+    axes[0].set_title("Effective rank")
+    axes[0].set_xlabel("checkpoint epoch")
+    axes[0].legend()
+    axes[0].grid(alpha=0.3)
+
+    any_right = False
+    for metric, label in [
+        ("raw_top1_eigen_ratio", "raw top-1 ratio"),
+        ("l2_top1_eigen_ratio", "L2 top-1 ratio"),
+    ]:
+        any_right = plot_metric(axes[1], rows, metric, label) or any_right
+    axes[1].set_title("Spectrum concentration")
+    axes[1].set_xlabel("checkpoint epoch")
+    axes[1].legend()
+    axes[1].grid(alpha=0.3)
+    fig.tight_layout()
+    if any_left or any_right:
+        path = out_dir / "fig_raw_vs_l2_spectrum.png"
+        fig.savefig(path, dpi=180)
+        written.append(path)
+    plt.close(fig)
+    return written
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--summary_csv", required=True)
@@ -129,6 +200,8 @@ def main():
     fig.savefig(fig_path, dpi=180)
     plt.close(fig)
 
+    for path in plot_raw_l2_figures(rows, out_dir):
+        print(f"saved raw/L2 figure: {path}")
     write_combined_summary(out_dir / "combined_dense_summary.csv", rows, voc_by_epoch)
     print(f"saved figure: {fig_path}")
     print(f"saved combined summary: {out_dir / 'combined_dense_summary.csv'}")

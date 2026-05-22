@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from analyze_patch_statistics import (
+    add_dse_scores,
     analyze_checkpoint,
     build_fixed_image_manifest,
     query_points_for_grid,
@@ -71,6 +72,37 @@ def test_fixed_image_manifest_records_paths_labels_and_order():
             "class_name": "class_b",
         },
     ]
+
+
+def test_add_dse_scores_populates_raw_and_l2_tracks():
+    rows = [
+        {
+            "epoch": 1,
+            "class_sep_avg": -4.0,
+            "effective_rank": 10.0,
+            "raw_class_sep_avg": -4.0,
+            "raw_effective_rank": 10.0,
+            "l2_class_sep_avg": -1.0,
+            "l2_effective_rank": 5.0,
+        },
+        {
+            "epoch": 2,
+            "class_sep_avg": -8.0,
+            "effective_rank": 20.0,
+            "raw_class_sep_avg": -8.0,
+            "raw_effective_rank": 20.0,
+            "l2_class_sep_avg": -2.0,
+            "l2_effective_rank": 9.0,
+        },
+    ]
+
+    scored = add_dse_scores(rows)
+
+    assert scored[0]["raw_dse_lambda"] > 0
+    assert scored[0]["l2_dse_lambda"] > 0
+    assert scored[0]["raw_dse"] == scored[0]["dse"]
+    assert scored[1]["raw_dse"] == scored[1]["dse"]
+    assert scored[0]["l2_dse"] != scored[0]["raw_dse"]
 
 
 def test_strict_internal_epoch_validation_happens_before_feature_extraction(tmp_path, monkeypatch):

@@ -336,6 +336,11 @@ def compute_dse_components(
     }
 
 
+def prefix_metrics(metrics: dict[str, float | int], prefix: str) -> dict[str, float | int]:
+    """Return metric keys with an explicit raw/l2 namespace."""
+    return {f"{prefix}_{key}": value for key, value in metrics.items()}
+
+
 def analyze_checkpoint(
     info,
     args,
@@ -381,10 +386,19 @@ def analyze_checkpoint(
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    flat = patch_tensor.reshape(-1, patch_tensor.shape[-1])
-    spec = spectrum_metrics(flat, max_tokens=args.max_spectrum_tokens)
-    dse_components = compute_dse_components(
-        patch_tensor,
+    patch_tensor_raw = patch_tensor.float()
+    patch_tensor_l2 = F.normalize(patch_tensor_raw, dim=-1, eps=1e-6)
+    flat_raw = patch_tensor_raw.reshape(-1, patch_tensor_raw.shape[-1])
+    flat_l2 = patch_tensor_l2.reshape(-1, patch_tensor_l2.shape[-1])
+    raw_spec = spectrum_metrics(flat_raw, max_tokens=args.max_spectrum_tokens)
+    l2_spec = spectrum_metrics(flat_l2, max_tokens=args.max_spectrum_tokens)
+    raw_dse_components = compute_dse_components(
+        patch_tensor_raw,
+        max_tokens=args.max_kmeans_tokens,
+        dse_group_stride=args.dse_group_stride,
+    )
+    l2_dse_components = compute_dse_components(
+        patch_tensor_l2,
         max_tokens=args.max_kmeans_tokens,
         dse_group_stride=args.dse_group_stride,
     )
@@ -406,8 +420,11 @@ def analyze_checkpoint(
     cls_cos = (F.normalize(patch_tensor, dim=-1) * F.normalize(cls_tensor, dim=-1)[:, None, :]).sum(dim=-1)
     save_histogram_csv(hist_dir / f"epoch_{info.epoch:04d}_cls_patch_cos_hist.csv", cls_cos)
 
-    spectrum = covariance_spectrum(flat, top_k=args.top_eigenvalues, max_tokens=args.max_spectrum_tokens)
-    np.save(epoch_dir / "covariance_spectrum.npy", np.asarray(spectrum, dtype=np.float32))
+    raw_spectrum = covariance_spectrum(flat_raw, top_k=args.top_eigenvalues, max_tokens=args.max_spectrum_tokens)
+    l2_spectrum = covariance_spectrum(flat_l2, top_k=args.top_eigenvalues, max_tokens=args.max_spectrum_tokens)
+    np.save(epoch_dir / "covariance_spectrum.npy", np.asarray(raw_spectrum, dtype=np.float32))
+    np.save(epoch_dir / "raw_covariance_spectrum.npy", np.asarray(raw_spectrum, dtype=np.float32))
+    np.save(epoch_dir / "l2_covariance_spectrum.npy", np.asarray(l2_spectrum, dtype=np.float32))
 
     row = {
         "epoch": info.epoch,
@@ -420,15 +437,22 @@ def analyze_checkpoint(
         "num_visualized_images": len(saved_visuals),
         "grid_height": height,
         "grid_width": width,
-        **spec,
-        **dse_components,
+        **raw_spec,
+        **raw_dse_components,
+        **prefix_metrics(raw_spec, "raw"),
+        **prefix_metrics(raw_dse_components, "raw"),
+        **prefix_metrics(l2_spec, "l2"),
+        **prefix_metrics(l2_dse_components, "l2"),
         **norm_stats,
         **attn_stats,
         **cos_stats,
         **query_stats,
     }
-    for index, value in enumerate(spectrum[: args.top_eigenvalues]):
+    for index, value in enumerate(raw_spectrum[: args.top_eigenvalues]):
         row[f"cov_eigenvalue_{index}"] = value
+        row[f"raw_cov_eigenvalue_{index}"] = value
+    for index, value in enumerate(l2_spectrum[: args.top_eigenvalues]):
+        row[f"l2_cov_eigenvalue_{index}"] = value
 
     save_json(epoch_dir / "metrics_pre_dse.json", jsonable_metric_row(row))
     print(json.dumps(jsonable_metric_row(row), indent=2), flush=True)
@@ -474,12 +498,24 @@ def save_fixed_basis_pca_maps(visual_records_by_epoch: dict[int, list[dict]], ou
 
 
 def add_dse_scores(rows: list[dict]) -> list[dict]:
-    sep = np.asarray([row.get("class_sep_avg", np.nan) for row in rows], dtype=float)
-    mdim = np.asarray([row.get("effective_rank", np.nan) for row in rows], dtype=float)
-    lam = float(np.nanstd(sep) / (np.nanstd(mdim) + 1e-12))
-    for row in rows:
-        row["dse_lambda"] = lam
-        row["dse"] = float(row["class_sep_avg"] + lam * row["effective_rank"])
+    def add_track(sep_key: str, rank_key: str, lambda_key: str, dse_key: str) -> float:
+        sep = np.asarray([row.get(sep_key, np.nan) for row in rows], dtype=float)
+        mdim = np.asarray([row.get(rank_key, np.nan) for row in rows], dtype=float)
+        lam = float(np.nanstd(sep) / (np.nanstd(mdim) + 1e-12))
+        for row in rows:
+            row[lambda_key] = lam
+            row[dse_key] = float(row[sep_key] + lam * row[rank_key])
+        return lam
+
+    add_track("class_sep_avg", "effective_rank", "dse_lambda", "dse")
+    if rows and "raw_class_sep_avg" in rows[0] and "raw_effective_rank" in rows[0]:
+        raw_lam = add_track("raw_class_sep_avg", "raw_effective_rank", "raw_dse_lambda", "raw_dse")
+        for row in rows:
+            # Backward-compatible unprefixed DSE is the raw-feature track.
+            row["dse_lambda"] = raw_lam
+            row["dse"] = row["raw_dse"]
+    if rows and "l2_class_sep_avg" in rows[0] and "l2_effective_rank" in rows[0]:
+        add_track("l2_class_sep_avg", "l2_effective_rank", "l2_dse_lambda", "l2_dse")
     return rows
 
 
