@@ -45,3 +45,11 @@ def test_eval_voc_dense_path_hint_matches_current_drive_checkpoint_folder():
 
     assert "/content/drive/MyDrive/dinocheckpoint" in source
     assert "dinocehckpoint" not in source
+
+
+def test_eval_voc_dense_exposes_optimizer_choice_for_notebooks():
+    source = (ROOT / "eval_voc_dense.py").read_text()
+
+    assert "--optimizer" in source
+    assert "choices=['adam', 'sgd']" in source
+    assert "optimizer_name=args.optimizer" in source

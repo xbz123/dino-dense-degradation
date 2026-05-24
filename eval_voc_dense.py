@@ -460,10 +460,15 @@ def extract_features(model, dataloader, device, feature_dtype=torch.float16):
 
 def train_linear_head(features_train, targets_train, features_val, targets_val,
                       embed_dim, num_classes, patch_size, img_size, device,
-                      epochs=15, lr=0.01, batch_size=32):
+                      epochs=15, lr=0.01, batch_size=32, optimizer_name='adam'):
     """Train linear segmentation head and return validation mIoU."""
     head = LinearSegHead(embed_dim, num_classes, patch_size, img_size).to(device)
-    optimizer = torch.optim.SGD(head.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4)
+    if optimizer_name == 'adam':
+        optimizer = torch.optim.Adam(head.parameters(), lr=lr)
+    elif optimizer_name == 'sgd':
+        optimizer = torch.optim.SGD(head.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4)
+    else:
+        raise ValueError(f"Unsupported optimizer: {optimizer_name}")
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     n_train = features_train.shape[0]
@@ -574,6 +579,9 @@ def main():
                         help='Number of epochs to train linear head per checkpoint')
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--optimizer', type=str, default='adam',
+                        choices=['adam', 'sgd'],
+                        help='Linear-head optimizer. Adam matches the paper-style notebook setting.')
     parser.add_argument('--feature_dtype', type=str, default='float16',
                         choices=['float16', 'float32'],
                         help='CPU dtype for cached patch features; float16 saves Colab RAM')
@@ -589,6 +597,7 @@ def main():
     print(f"Image size (adjusted): {args.img_size}")
     feature_dtype = torch.float16 if args.feature_dtype == 'float16' else torch.float32
     print(f"Cached feature dtype: {args.feature_dtype}")
+    print(f"Linear-head optimizer: {args.optimizer}")
 
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -666,6 +675,7 @@ def main():
             epochs=args.train_epochs,
             lr=args.lr,
             batch_size=args.batch_size,
+            optimizer_name=args.optimizer,
         )
 
         print(f"  ✅ Epoch {epoch}: mIoU = {miou * 100:.2f}%")
