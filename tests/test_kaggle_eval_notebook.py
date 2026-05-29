@@ -39,6 +39,13 @@ def test_kaggle_eval_notebook_defaults_to_full_raw_l2_sweep():
     assert "OUTPUT_RUN_SUFFIX = 'raw_l2_full'" in source
 
 
+def test_kaggle_eval_notebook_keeps_checkpoint_copies_out_of_saved_output():
+    source = NOTEBOOK.read_text()
+
+    assert "WORK_CKPT_DIR = Path('/tmp/dino_eval_checkpoints')" in source
+    assert "WORK_CKPT_DIR = Path('/kaggle/working/dino_eval_checkpoints')" not in source
+
+
 def test_kaggle_eval_notebook_can_reuse_any_attached_voc_json():
     source = NOTEBOOK.read_text()
 
