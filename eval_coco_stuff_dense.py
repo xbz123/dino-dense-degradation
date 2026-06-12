@@ -57,15 +57,17 @@ class COCOStuffSegDataset(torch.utils.data.Dataset):
         ignore_index: int = IGNORE_INDEX,
         max_images: int | None = None,
     ) -> None:
-        self.root = Path(root)
+        self.original_root = Path(root)
         self.split = split
         self.img_size = (img_size // patch_size) * patch_size
         self.patch_size = patch_size
         self.num_classes = num_classes
         self.ignore_index = ignore_index
+        self.root = self._resolve_dataset_root(self.original_root)
 
         self.image_dir = self._find_image_dir()
         self.mask_dir = self._find_mask_dir()
+        self.split_stems = self._load_split_stems()
         self.samples = self._pair_samples()
         if max_images is not None:
             self.samples = self.samples[:max_images]
@@ -85,6 +87,32 @@ class COCOStuffSegDataset(torch.utils.data.Dataset):
             ]
         )
 
+    def _resolve_dataset_root(self, root: Path) -> Path:
+        if self._looks_like_dataset_root(root):
+            return root
+
+        child_roots = [
+            path
+            for path in sorted(root.iterdir())
+            if path.is_dir() and self._looks_like_dataset_root(path)
+        ]
+        if child_roots:
+            return child_roots[0]
+        return root
+
+    def _looks_like_dataset_root(self, path: Path) -> bool:
+        split_2017 = f"{self.split}2017"
+        markers = [
+            path / "images",
+            path / "annotations",
+            path / "stuffthingmaps",
+            path / "stuffthingmaps_trainval2017",
+            path / split_2017,
+            path / self.split,
+            path / self.split / "images",
+        ]
+        return any(marker.is_dir() for marker in markers)
+
     def _find_existing_dir(self, candidates: list[Path], kind: str) -> Path:
         for path in candidates:
             if path.is_dir():
@@ -101,8 +129,10 @@ class COCOStuffSegDataset(torch.utils.data.Dataset):
             [
                 self.root / "images" / split_2017,
                 self.root / "images" / self.split,
+                self.root / self.split / "images",
                 self.root / split_2017,
                 self.root / self.split,
+                self.root / "images",
             ],
             "image",
         )
@@ -113,13 +143,44 @@ class COCOStuffSegDataset(torch.utils.data.Dataset):
             [
                 self.root / "annotations" / split_2017,
                 self.root / "annotations" / self.split,
+                self.root / self.split / "annotations",
+                self.root / self.split / "masks",
+                self.root / "masks" / split_2017,
+                self.root / "masks" / self.split,
                 self.root / "stuffthingmaps" / split_2017,
                 self.root / "stuffthingmaps" / self.split,
                 self.root / "stuffthingmaps_trainval2017" / "annotations" / split_2017,
                 self.root / "stuffthingmaps_trainval2017" / "annotations" / self.split,
+                self.root / "annotations",
+                self.root / "masks",
             ],
             "mask",
         )
+
+    def _load_split_stems(self) -> set[str] | None:
+        image_lists_dir = self.root / "imageLists"
+        if not image_lists_dir.is_dir():
+            return None
+
+        split_2017 = f"{self.split}2017"
+        candidates = [
+            image_lists_dir / f"{self.split}.txt",
+            image_lists_dir / f"{split_2017}.txt",
+        ]
+        candidates.extend(sorted(image_lists_dir.glob(f"{self.split}*.txt")))
+
+        split_file = next((path for path in candidates if path.is_file()), None)
+        if split_file is None:
+            return None
+
+        stems = set()
+        with split_file.open() as handle:
+            for line in handle:
+                token = line.strip().split()
+                if not token:
+                    continue
+                stems.add(Path(token[0]).stem)
+        return stems
 
     def _pair_samples(self) -> list[tuple[Path, Path]]:
         image_paths = sorted(
@@ -127,6 +188,9 @@ class COCOStuffSegDataset(torch.utils.data.Dataset):
             for path in self.image_dir.iterdir()
             if path.suffix.lower() in {".jpg", ".jpeg", ".png"}
         )
+        if self.split_stems is not None:
+            image_paths = [path for path in image_paths if path.stem in self.split_stems]
+
         samples = []
         for image_path in image_paths:
             mask_path = self.mask_dir / f"{image_path.stem}.png"

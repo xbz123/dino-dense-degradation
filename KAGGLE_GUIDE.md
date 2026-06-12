@@ -173,7 +173,7 @@ print(f"Val classes: {len(os.listdir(val_path))}")
      ```
    - 示例路径：
      ```text
-     /kaggle/input/dino-checkpoints/dinocheckpoint/
+     /kaggle/input/datasets/bingzhouxie/dinockp/
      ```
 
 3. **COCO-Stuff 数据**
@@ -189,6 +189,13 @@ print(f"Val classes: {len(os.listdir(val_path))}")
    - 在 Kaggle 中示例路径可能是：
      ```text
      /kaggle/input/coco-stuff/coco_stuff/
+     ```
+   - 如果使用 Kaggle 上的 `dntai2/cocostuff-10k-v1-1`，当前 evaluator 也支持它的 10K v1.1 结构：
+     ```text
+     /kaggle/input/datasets/dntai2/cocostuff-10k-v1-1/
+       cocostuff-10k-v1.1/images/*.jpg
+       cocostuff-10k-v1.1/annotations/*.png
+       cocostuff-10k-v1.1/imageLists/*.txt
      ```
 
 4. **已有 VOC/DSE 结果（可选但推荐）**
@@ -206,8 +213,8 @@ print(f"Val classes: {len(os.listdir(val_path))}")
 %cd /kaggle/working/dino
 
 !python eval_coco_stuff_dense.py \
-    --ckpt_dir /kaggle/input/dino-checkpoints/dinocheckpoint \
-    --coco_root /kaggle/input/coco-stuff/coco_stuff \
+    --ckpt_dir /kaggle/input/datasets/bingzhouxie/dinockp \
+    --coco_root /kaggle/input/datasets/dntai2/cocostuff-10k-v1-1 \
     --epochs 180,318 \
     --img_size 336 \
     --batch_size 64 \
@@ -236,8 +243,8 @@ coco_stuff_summary.md
 %cd /kaggle/working/dino
 
 !python eval_coco_stuff_dense.py \
-    --ckpt_dir /kaggle/input/dino-checkpoints/dinocheckpoint \
-    --coco_root /kaggle/input/coco-stuff/coco_stuff \
+    --ckpt_dir /kaggle/input/datasets/bingzhouxie/dinockp \
+    --coco_root /kaggle/input/datasets/dntai2/cocostuff-10k-v1-1 \
     --epochs 50,80,180,220,300,318 \
     --img_size 336 \
     --batch_size 64 \
