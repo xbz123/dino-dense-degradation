@@ -53,3 +53,21 @@ def test_eval_voc_dense_exposes_optimizer_choice_for_notebooks():
     assert "--optimizer" in source
     assert "choices=['adam', 'sgd']" in source
     assert "optimizer_name=args.optimizer" in source
+
+
+def test_kaggle_guide_documents_coco_stuff_selected_validation():
+    source = (ROOT / "KAGGLE_GUIDE.md").read_text()
+
+    assert "eval_coco_stuff_dense.py" in source
+    assert "/content/drive/MyDrive/coco_stuff" in source
+    assert "--epochs 180,318" in source
+    assert "--epochs 50,80,180,220,300,318" in source
+    assert "coco_stuff_selected" in source
+
+
+def test_project_status_mentions_coco_stuff_selected_evaluator():
+    source = (ROOT / "PROJECT_STATUS.md").read_text()
+
+    assert "eval_coco_stuff_dense.py" in source
+    assert "COCO-Stuff selected-checkpoint" in source
+    assert "COCO-Stuff, ADE20K, and Cityscapes linear segmentation are still future work" not in source

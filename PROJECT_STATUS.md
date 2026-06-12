@@ -41,12 +41,18 @@ Completed work:
 
 ### Dense Evaluation Workflow
 
-The repository includes `eval_voc_dense.py`, a standalone dense evaluation
-script for PASCAL VOC semantic segmentation linear probing.
+The repository includes standalone dense evaluation scripts for frozen-backbone
+linear segmentation probing:
+
+- `eval_voc_dense.py` runs PASCAL VOC linear probing across checkpoints.
+- `eval_coco_stuff_dense.py` runs COCO-Stuff selected-checkpoint linear probing
+  for validating whether the VOC trend appears on a denser segmentation
+  benchmark.
 
 The evaluation workflow:
 
-- Downloads PASCAL VOC 2012 when needed.
+- Downloads PASCAL VOC 2012 when needed; COCO-Stuff is provided as an external
+  dataset path.
 - Loads a series of DINO checkpoints.
 - Freezes the DINO backbone.
 - Trains a lightweight 1x1 convolutional segmentation head.
@@ -125,9 +131,9 @@ Known limitations:
 - `eval_voc_dense.py` is a lightweight frozen-backbone VOC linear-probing
   runner for trend analysis, not a full reproduction of every downstream
   setting in the SDD paper.
-- COCO-Stuff, ADE20K, and Cityscapes linear segmentation are still future work;
-  current downstream evidence is centered on PASCAL VOC plus structural
-  diagnostics.
+- COCO-Stuff selected-checkpoint evaluation is now implemented, but full
+  COCO-Stuff results have not yet been run in this checkout. ADE20K and
+  Cityscapes linear segmentation remain future work.
 - Full Colab/Kaggle runs depend on external data, checkpoints, and GPU runtime,
   so local tests validate code paths and configuration wiring rather than
   reproducing a complete GPU sweep.
@@ -142,8 +148,8 @@ Planned research and engineering work:
    rank and CLS-patch cosine similarity.
 3. Compare VOC mIoU with the Colab notebook's DSE class separability,
    effective-rank, patch-statistic, and CLS-attention outputs.
-4. Add COCO-Stuff linear segmentation on selected checkpoints if VOC remains
-   stable but structural diagnostics drift.
+4. Run the COCO-Stuff selected-checkpoint evaluator on
+   `50 / 80 / 180 / 220 / 300 / 318` and compare the curve with VOC and DSE.
 5. Continue pretraining toward the target training horizon where needed.
 6. Use the confirmed degradation pattern to evaluate mitigation strategies,
    such as dense contrastive objectives or architectural changes that preserve
@@ -161,6 +167,8 @@ Planned research and engineering work:
 - `plot_dense_diagnostics.py`: Diagnostic plotting and VOC merge utility.
 - `make_summary_report.py`: Markdown report generator for evaluation runs.
 - `eval_voc_dense.py`: PASCAL VOC dense evaluation script.
+- `eval_coco_stuff_dense.py`: COCO-Stuff selected-checkpoint dense evaluation
+  script.
 - `notebooks/colab_dense_degradation_all_checkpoints.ipynb`: Colab workflow for
   evaluating all Drive checkpoints and exporting mIoU, DSE metrics, and
   qualitative patch/attention diagnostics.

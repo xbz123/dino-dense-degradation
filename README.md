@@ -116,6 +116,8 @@ where `XXXX` is the largest checkpoint epoch found in the Drive folder.
 
 The notebook is a thin Colab wrapper around these repository scripts:
 
+- `eval_coco_stuff_dense.py`: runs selected-checkpoint COCO-Stuff
+  frozen-backbone linear probing and writes COCO/VOC/DSE comparison outputs.
 - `analyze_patch_statistics.py`: scans checkpoints and computes paper-formula
   DSE class separability, effective rank, covariance spectrum, CLS-patch
   cosine, patch norm histograms, CLS attention statistics, fixed-query patch

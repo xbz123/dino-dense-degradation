@@ -145,6 +145,118 @@ print(f"Val classes: {len(os.listdir(val_path))}")
 
 ---
 
+## 第五阶段：COCO-Stuff selected-checkpoint 验证
+
+这个阶段用于验证 PASCAL VOC 上看到的 post-epoch-180 dense drop 是否也出现在 COCO-Stuff 上。它**不重新训练 DINO backbone**，只对已保存的 checkpoint 做 frozen-backbone linear probing。
+
+### 需要提前准备的 Kaggle Input
+
+1. **代码仓库**
+   - 使用 Cell 1 中 clone 的 GitHub 仓库即可。
+   - 需要包含：
+     ```text
+     eval_coco_stuff_dense.py
+     eval_voc_dense.py
+     dense_eval_utils.py
+     ```
+
+2. **DINO checkpoints**
+   - 挂载包含历史 checkpoint 的 Kaggle Dataset。
+   - 目录里至少要有：
+     ```text
+     checkpoint0050.pth
+     checkpoint0080.pth
+     checkpoint0180.pth
+     checkpoint0220.pth
+     checkpoint0300.pth
+     checkpoint0318.pth
+     ```
+   - 示例路径：
+     ```text
+     /kaggle/input/dino-checkpoints/dinocheckpoint/
+     ```
+
+3. **COCO-Stuff 数据**
+   - 挂载 COCO-Stuff train/val image 和 annotation mask。
+   - 推荐在 Drive/Colab 中整理为同样结构后上传到 Kaggle Dataset：
+     ```text
+     /content/drive/MyDrive/coco_stuff/
+       images/train2017/*.jpg
+       images/val2017/*.jpg
+       annotations/train2017/*.png
+       annotations/val2017/*.png
+     ```
+   - 在 Kaggle 中示例路径可能是：
+     ```text
+     /kaggle/input/coco-stuff/coco_stuff/
+     ```
+
+4. **已有 VOC/DSE 结果（可选但推荐）**
+   - 如果要生成 `coco_voc_dse_comparison.csv`，挂载已有 raw/L2 run 输出：
+     ```text
+     voc_all_checkpoints/voc_miou_results.json
+     figures/combined_dense_summary.csv
+     ```
+
+### Smoke test：先只跑 180 和 318
+
+先确认数据路径、mask label、nearest-neighbor resize、linear head 训练和 mIoU 计算都正常：
+
+```python
+%cd /kaggle/working/dino
+
+!python eval_coco_stuff_dense.py \
+    --ckpt_dir /kaggle/input/dino-checkpoints/dinocheckpoint \
+    --coco_root /kaggle/input/coco-stuff/coco_stuff \
+    --epochs 180,318 \
+    --img_size 336 \
+    --batch_size 64 \
+    --train_epochs 1 \
+    --lr 0.0025 \
+    --feature_dtype float16 \
+    --max_train_images 2000 \
+    --max_val_images 500 \
+    --output_dir /kaggle/working/dino_dense_degradation_eval/to_epoch_0318_raw_l2/coco_stuff_selected_smoke
+```
+
+Smoke test 通过后，检查输出：
+
+```text
+coco_stuff_miou_results.json
+dense_degradation_coco_stuff.png
+coco_voc_dse_comparison.csv
+coco_stuff_summary.md
+```
+
+### 正式 selected-checkpoint run
+
+正式最小验证跑 6 个 checkpoint：
+
+```python
+%cd /kaggle/working/dino
+
+!python eval_coco_stuff_dense.py \
+    --ckpt_dir /kaggle/input/dino-checkpoints/dinocheckpoint \
+    --coco_root /kaggle/input/coco-stuff/coco_stuff \
+    --epochs 50,80,180,220,300,318 \
+    --img_size 336 \
+    --batch_size 64 \
+    --train_epochs 15 \
+    --lr 0.0025 \
+    --feature_dtype float16 \
+    --voc_results_json /kaggle/input/dino-eval-results/to_epoch_0318_raw_l2/voc_all_checkpoints/voc_miou_results.json \
+    --dense_summary_csv /kaggle/input/dino-eval-results/to_epoch_0318_raw_l2/figures/combined_dense_summary.csv \
+    --output_dir /kaggle/working/dino_dense_degradation_eval/to_epoch_0318_raw_l2/coco_stuff_selected
+```
+
+判断标准：
+
+- 如果 COCO-Stuff 也在 epoch 180 附近最好，并在 epoch 318 下降，说明 VOC drop 不是单一数据集现象。
+- 如果 COCO-Stuff 不下降，当前结论要保持谨慎，VOC drop 可能和 dataset/probe sensitivity 有关。
+- 如果曲线很 noisy，再只对 `180 / 300 / 318` 跑 3 个 seed，而不是立即扩大到全 checkpoint sweep。
+
+---
+
 ## 性能参考
 
 | 平台 | GPU | 步数/epoch | 每 epoch 耗时 |
