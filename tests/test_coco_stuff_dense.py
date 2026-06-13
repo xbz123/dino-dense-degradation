@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from PIL import Image
+from scipy.io import savemat
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -47,6 +48,23 @@ def _write_image_mask_pair(
     image[..., 2] = 40
     Image.fromarray(image).save(image_dir / f"{stem}.jpg")
     Image.fromarray(mask_values.astype(np.uint8)).save(mask_dir / f"{stem}.png")
+
+
+def _write_image_mat_pair(
+    image_dir: Path,
+    mask_dir: Path,
+    stem: str,
+    mask_values: np.ndarray,
+) -> None:
+    image_dir.mkdir(parents=True, exist_ok=True)
+    mask_dir.mkdir(parents=True, exist_ok=True)
+
+    image = np.zeros((mask_values.shape[0], mask_values.shape[1], 3), dtype=np.uint8)
+    image[..., 0] = 120
+    image[..., 1] = 80
+    image[..., 2] = 40
+    Image.fromarray(image).save(image_dir / f"{stem}.jpg")
+    savemat(mask_dir / f"{stem}.mat", {"S": mask_values.astype(np.uint8)})
 
 
 def test_coco_stuff_dataset_pairs_images_and_masks_with_nearest_resize(tmp_path):
@@ -110,6 +128,33 @@ def test_coco_stuff_dataset_supports_flat_10k_v11_layout_with_image_lists(tmp_pa
     assert [image_path.name for image_path, _ in val_dataset.samples] == [
         "COCO_train2014_000000000113.jpg"
     ]
+
+
+def test_coco_stuff_dataset_supports_flat_10k_v11_mat_annotations(tmp_path):
+    dataset_root = tmp_path / "cocostuff-10k-v1-1" / "cocostuff-10k-v1.1"
+    mask = np.array([[0, 1], [2, 255]], dtype=np.uint8)
+    _write_image_mat_pair(
+        dataset_root / "images",
+        dataset_root / "annotations",
+        "COCO_train2014_000000000077",
+        mask,
+    )
+    image_lists = dataset_root / "imageLists"
+    image_lists.mkdir(parents=True)
+    (image_lists / "train.txt").write_text("COCO_train2014_000000000077\n")
+
+    dataset = COCOStuffSegDataset(
+        tmp_path / "cocostuff-10k-v1-1",
+        split="train",
+        img_size=32,
+        patch_size=16,
+        num_classes=3,
+    )
+    _, target = dataset[0]
+
+    assert len(dataset) == 1
+    assert dataset.samples[0][1].suffix == ".mat"
+    assert set(target.unique().tolist()) == {0, 1, 2, 255}
 
 
 def test_coco_stuff_dataset_supports_split_image_and_mask_layout(tmp_path):

@@ -62,6 +62,7 @@ def test_kaggle_guide_documents_coco_stuff_selected_validation():
     assert "/content/drive/MyDrive/coco_stuff" in source
     assert "/kaggle/input/datasets/bingzhouxie/dinockp" in source
     assert "/kaggle/input/datasets/dntai2/cocostuff-10k-v1-1" in source
+    assert "annotations/*.mat" in source
     assert "--epochs 180,318" in source
     assert "--epochs 50,80,180,220,300,318" in source
     assert "coco_stuff_selected" in source

@@ -194,7 +194,7 @@ print(f"Val classes: {len(os.listdir(val_path))}")
      ```text
      /kaggle/input/datasets/dntai2/cocostuff-10k-v1-1/
        cocostuff-10k-v1.1/images/*.jpg
-       cocostuff-10k-v1.1/annotations/*.png
+       cocostuff-10k-v1.1/annotations/*.mat
        cocostuff-10k-v1.1/imageLists/*.txt
      ```
 

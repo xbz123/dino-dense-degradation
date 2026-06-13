@@ -32,6 +32,11 @@ from PIL import Image
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
+try:
+    from scipy.io import loadmat
+except ImportError:  # pragma: no cover - exercised only in scipy-free environments
+    loadmat = None
+
 from eval_voc_dense import (
     compute_miou,
     discover_checkpoints,
@@ -193,10 +198,17 @@ class COCOStuffSegDataset(torch.utils.data.Dataset):
 
         samples = []
         for image_path in image_paths:
-            mask_path = self.mask_dir / f"{image_path.stem}.png"
-            if mask_path.is_file():
+            mask_path = self._find_mask_path(image_path.stem)
+            if mask_path is not None:
                 samples.append((image_path, mask_path))
         return samples
+
+    def _find_mask_path(self, stem: str) -> Path | None:
+        for suffix in (".png", ".mat"):
+            mask_path = self.mask_dir / f"{stem}{suffix}"
+            if mask_path.is_file():
+                return mask_path
+        return None
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -207,7 +219,8 @@ class COCOStuffSegDataset(torch.utils.data.Dataset):
         image = Image.open(image_path).convert("RGB")
         image = self.img_transform(image)
 
-        mask = Image.open(mask_path)
+        target = self._load_mask(mask_path)
+        mask = self._mask_array_to_image(target)
         mask = mask.resize((self.img_size, self.img_size), resample=Image.Resampling.NEAREST)
         target = np.array(mask, dtype=np.int64)
         invalid = (target != self.ignore_index) & (
@@ -216,6 +229,45 @@ class COCOStuffSegDataset(torch.utils.data.Dataset):
         target[invalid] = self.ignore_index
 
         return image, torch.from_numpy(target).long()
+
+    def _load_mask(self, mask_path: Path) -> np.ndarray:
+        if mask_path.suffix.lower() == ".mat":
+            return self._load_mat_mask(mask_path)
+        return np.array(Image.open(mask_path), dtype=np.int64)
+
+    def _load_mat_mask(self, mask_path: Path) -> np.ndarray:
+        if loadmat is None:
+            raise ImportError("scipy is required to load COCO-Stuff .mat annotations")
+        mat_data = loadmat(mask_path)
+        preferred_keys = ("S", "LabelMap", "labelMap", "segmentation", "annotation", "mask")
+        for key in preferred_keys:
+            if key in mat_data:
+                mask = self._coerce_mat_label_array(mat_data[key])
+                if mask is not None:
+                    return mask
+
+        for key, value in mat_data.items():
+            if key.startswith("__"):
+                continue
+            mask = self._coerce_mat_label_array(value)
+            if mask is not None:
+                return mask
+
+        available = ", ".join(sorted(key for key in mat_data if not key.startswith("__")))
+        raise ValueError(f"No 2D numeric label map found in {mask_path}; keys: {available}")
+
+    def _coerce_mat_label_array(self, value: object) -> np.ndarray | None:
+        array = np.asarray(value).squeeze()
+        if array.ndim != 2 or not np.issubdtype(array.dtype, np.number):
+            return None
+        return array.astype(np.int64)
+
+    def _mask_array_to_image(self, target: np.ndarray) -> Image.Image:
+        if target.size == 0:
+            return Image.fromarray(target.astype(np.uint8))
+        if target.min() >= 0 and target.max() <= np.iinfo(np.uint8).max:
+            return Image.fromarray(target.astype(np.uint8))
+        return Image.fromarray(target.astype(np.int32))
 
 
 def parse_epoch_filter(value: str | None) -> list[int] | None:
