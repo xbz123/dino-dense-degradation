@@ -220,6 +220,7 @@ print(f"Val classes: {len(os.listdir(val_path))}")
     --batch_size 64 \
     --train_epochs 1 \
     --lr 0.0025 \
+    --loss_resolution patch \
     --feature_dtype float16 \
     --max_train_images 2000 \
     --max_val_images 500 \
@@ -250,6 +251,7 @@ coco_stuff_summary.md
     --batch_size 64 \
     --train_epochs 15 \
     --lr 0.0025 \
+    --loss_resolution patch \
     --feature_dtype float16 \
     --voc_results_json /kaggle/input/dino-eval-results/to_epoch_0318_raw_l2/voc_all_checkpoints/voc_miou_results.json \
     --dense_summary_csv /kaggle/input/dino-eval-results/to_epoch_0318_raw_l2/figures/combined_dense_summary.csv \

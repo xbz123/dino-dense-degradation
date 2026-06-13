@@ -527,6 +527,7 @@ def evaluate_checkpoints(args: argparse.Namespace) -> list[dict[str, float]]:
             lr=args.lr,
             batch_size=args.batch_size,
             optimizer_name=args.optimizer,
+            loss_resolution=args.loss_resolution,
         )
         miou_percent = float(miou * 100)
         if not math.isfinite(miou_percent):
@@ -571,6 +572,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lr", type=float, default=0.0025)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--optimizer", type=str, default="adam", choices=["adam", "sgd"])
+    parser.add_argument(
+        "--loss_resolution",
+        type=str,
+        default="patch",
+        choices=["patch", "image"],
+        help="Use patch-grid loss to avoid full-resolution COCO-Stuff logits during training.",
+    )
     parser.add_argument("--feature_dtype", type=str, default="float16", choices=["float16", "float32"])
     parser.add_argument("--num_workers", type=int, default=2)
     parser.add_argument("--max_train_images", type=int, default=None)

@@ -269,12 +269,14 @@ class LinearSegHead(nn.Module):
         # 1x1 convolution: maps embed_dim -> num_classes
         self.linear = nn.Conv2d(embed_dim, num_classes, kernel_size=1)
 
-    def forward(self, patch_tokens):
+    def forward(self, patch_tokens, upsample=True):
         """
         Args:
             patch_tokens: (B, N_patches, embed_dim) from ViT backbone
+            upsample: whether to resize logits to original image resolution
         Returns:
-            logits: (B, num_classes, H, W) at original image resolution
+            logits: (B, num_classes, H, W) at original image resolution when
+                upsample=True, otherwise patch-grid logits.
         """
         B, N, D = patch_tokens.shape
         # Reshape patch tokens to spatial grid
@@ -282,6 +284,8 @@ class LinearSegHead(nn.Module):
         x = patch_tokens.transpose(1, 2).reshape(B, D, h, w)  # (B, D, h, w)
         # Apply 1x1 conv
         logits = self.linear(x)  # (B, num_classes, h, w)
+        if not upsample:
+            return logits
         # Upsample to original resolution
         logits = F.interpolate(logits, size=(self.img_size, self.img_size), mode='bilinear', align_corners=False)
         return logits
@@ -316,6 +320,17 @@ def compute_miou(pred, target, num_classes=21, ignore_index=255):
     if len(ious) == 0:
         return 0.0
     return np.mean(ious)
+
+
+def resize_segmentation_target(target, size):
+    """Nearest-neighbor resize target masks to a spatial size."""
+    if tuple(target.shape[-2:]) == tuple(size):
+        return target
+    return F.interpolate(
+        target.unsqueeze(1).float(),
+        size=size,
+        mode='nearest',
+    ).squeeze(1).long()
 
 
 # =====================================================================
@@ -460,8 +475,11 @@ def extract_features(model, dataloader, device, feature_dtype=torch.float16):
 
 def train_linear_head(features_train, targets_train, features_val, targets_val,
                       embed_dim, num_classes, patch_size, img_size, device,
-                      epochs=15, lr=0.01, batch_size=32, optimizer_name='adam'):
+                      epochs=15, lr=0.01, batch_size=32, optimizer_name='adam',
+                      loss_resolution='image'):
     """Train linear segmentation head and return validation mIoU."""
+    if loss_resolution not in {'image', 'patch'}:
+        raise ValueError(f"Unsupported loss_resolution: {loss_resolution}")
     head = LinearSegHead(embed_dim, num_classes, patch_size, img_size).to(device)
     if optimizer_name == 'adam':
         optimizer = torch.optim.Adam(head.parameters(), lr=lr)
@@ -484,8 +502,13 @@ def train_linear_head(features_train, targets_train, features_val, targets_val,
             feat = features_train[idx].to(device=device, dtype=torch.float32)
             tgt = targets_train[idx].to(device=device, dtype=torch.long)
 
-            logits = head(feat)
-            loss = F.cross_entropy(logits, tgt, ignore_index=255)
+            if loss_resolution == 'patch':
+                logits = head(feat, upsample=False)
+                tgt_for_loss = resize_segmentation_target(tgt, logits.shape[-2:])
+            else:
+                logits = head(feat)
+                tgt_for_loss = tgt
+            loss = F.cross_entropy(logits, tgt_for_loss, ignore_index=255)
 
             optimizer.zero_grad()
             loss.backward()
