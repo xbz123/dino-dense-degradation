@@ -11,6 +11,7 @@ dino_eval_checkpoints/
 dense_eval_results/
 dino_dense_degradation_eval/
 to_epoch_*/
+external/
 
 # Local paper/reference copies should not be committed.
 Exploring Structural Degradation in Dense Representations for Self-supervised Learning .pdf

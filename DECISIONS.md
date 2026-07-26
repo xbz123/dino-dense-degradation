@@ -172,6 +172,23 @@ Rationale:
 - The schedule audit and metric-v2 rerun are independent; neither is skipped
   because of the other's outcome.
 
+### Decision: Treat the verified epoch-170-to-318 archive as stitched
+
+The offline archive contains 15 byte-verified checkpoints with consistent
+epoch coordinates. Embedded training arguments separate them into target
+horizons of 200, 300, and 500 epochs. The schedule audit therefore returns
+`stitched` with partial evidence.
+
+Consequences:
+
+- Historical VOC and structural curves remain useful exploratory evidence.
+- Selected-checkpoint metric-v2 repeats still run to quantify probe noise and
+  endpoint behavior, but they cannot establish a clean-horizon phenomenon.
+- Independent session logs remain required to localize LR/WD boundary
+  behavior, not to reverse the stitched classification.
+- A mitigation experiment requires a predeclared clean fixed-horizon
+  phenomenon reproduction first.
+
 ### Decision: Establish the late-stage phenomenon before migrating mitigation
 
 The first gate uses fixed epochs `180`, `250`, and `318`, probe seeds `42`,
@@ -361,6 +378,7 @@ Do not commit:
 ```text
 *.pth
 dinocehckpoint/
+external/
 dino_checkpoint*/
 dino_checkpoints*/
 dino_eval_checkpoints/

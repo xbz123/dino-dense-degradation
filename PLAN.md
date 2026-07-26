@@ -30,10 +30,11 @@ Current correction:
 
 Complete these steps before implementing a late-stage mitigation:
 
-1. Retrieve and hash the required checkpoints and every independent training
-   session `log.txt`, then run `audit_training_schedule.py`. Only
-   `continuous` reaches the clean-horizon scientific gate; `stitched` remains
-   exploratory and `unknown` blocks a verdict.
+1. The required checkpoints are retrieved, hashed, and archived offline. The
+   audit finds three target horizons (`200`, `300`, and `500`) and returns
+   `stitched` with partial evidence. Retrieve every independent training
+   session `log.txt` to localize the boundaries; logs cannot convert the
+   observed identity changes into a clean continuous horizon.
 2. Use explicit probe seeds `42`, `1337`, and `2027`. The evaluator resets the
    selected seed before each checkpoint so head initialization and minibatch
    order are matched across the curve. Use `--checkpoint_key teacher`
@@ -46,14 +47,16 @@ Complete these steps before implementing a late-stage mitigation:
 4. Estimate a predeclared post-peak trend instead of selecting the maximum
    after viewing the curve.
 5. Run the existing COCO-Stuff evaluator on the same selected checkpoints.
-6. Freeze the intervention fork, primary contrast, equivalence margin, stop
-   rule, and kill criterion from those measurements.
+6. Treat the selected-checkpoint reruns as stitched-run characterization, then
+   freeze a clean fixed-horizon phenomenon reproduction. Freeze an
+   intervention fork, primary contrast, equivalence margin, stop rule, and
+   kill criterion only after that clean-horizon gate passes.
 
-If the gate passes, the first late-stage experiment uses one fork and only two
-matched arms: C0 continuation and CLS-CRR continuation. Epoch 150 or 180 is the
-initial prevention candidate; epoch 220 is a later rescue tier. A KoLeo arm is
-deferred until C1 shows a positive late-stage effect, which limits the first
-migration to one regularizer.
+If the clean-horizon gate later passes, the first late-stage experiment uses
+one fork and only two matched arms: C0 continuation and CLS-CRR continuation.
+Epoch 150 or 180 is the initial prevention candidate; epoch 220 is a later
+rescue tier. A KoLeo arm is deferred until C1 shows a positive late-stage
+effect, which limits the first migration to one regularizer.
 
 ## Implementation Order
 

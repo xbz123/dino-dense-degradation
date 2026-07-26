@@ -44,6 +44,7 @@ evaluation outputs support that claim.
   dino_checkpoint*/
   dino_checkpoints*/
   dinocehckpoint/
+  external/
   ```
 
 - Before staging, use explicit file paths. Do not use broad `git add -A` if

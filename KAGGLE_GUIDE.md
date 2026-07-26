@@ -151,10 +151,12 @@ print(f"Val classes: {len(os.listdir(val_path))}")
 post-epoch-180 dense drop，是否在修正后的 `global_confusion_v2` 协议和
 COCO-Stuff 上仍然存在。历史 v1 数值只作现象线索，不能进入正式比较或
 判定门。这个阶段**不重新训练 DINO backbone**，只对已保存的 checkpoint
-做 frozen-backbone linear probing。正式现象判定还要求
-`audit_training_schedule.py` 对所需 checkpoints 和每个独立 session
-`log.txt` 给出 `continuous`；`stitched` 或 `unknown` 不能按单一训练
-horizon 解释。
+做 frozen-backbone linear probing。当前已验证的 epoch 170-318
+checkpoint 归档包含 `epochs=200 / 300 / 500` 三种 target，调度审计结果为
+`stitched`。因此这些 checkpoint 的 VOC/COCO 重测只能用于探索性刻画，
+不能按单一训练 horizon 完成正式现象判定。正式判定需要另行执行预注册、
+固定 target 的 clean-horizon 训练；独立 session `log.txt` 仍应补档，用于
+定位和量化历史边界。
 
 ### 需要提前准备的 Kaggle Input
 

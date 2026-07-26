@@ -81,6 +81,14 @@ LR/weight-decay/teacher-momentum trajectories. Its verdict is `stitched`,
 `continuous`, or `unknown`; only sufficient `continuous` evidence supports
 interpreting the supplied checkpoints as one clean training horizon.
 
+The verified offline archive currently contains 15 checkpoints spanning
+experiment epochs 170 through 318. Their embedded arguments establish target
+horizons of 200, 300, and 500 epochs, so the current verdict is `stitched`
+with partial evidence. The checkpoint bytes and epoch coordinates are valid,
+but the historical curve is exploratory rather than a clean-horizon
+phenomenon result. Independent session logs are still needed to localize and
+quantify the schedule boundaries.
+
 The repository also includes a Colab notebook for the current Drive-based
 evaluation workflow:
 
@@ -162,9 +170,10 @@ Known limitations:
   a degradation window or intervention fork.
 - The metric-v2 code and notebook wiring are implemented, but the formal GPU
   reruns and resulting v2 artifacts are not yet present in this checkout.
-- The local schedule audit covers only checkpoint labels 180 through 235, all
-  with one target-300 schedule identity, and has no independent session logs.
-  Its current verdict is `unknown`, not `continuous`.
+- The offline schedule audit covers 15 verified checkpoints from labels 170
+  through 318 and detects target-horizon changes from 200 to 300 to 500. Its
+  verdict is `stitched` with partial evidence because independent session logs
+  are not yet archived.
 - COCO-Stuff selected-checkpoint evaluation is now implemented, but full
   COCO-Stuff results have not yet been run in this checkout. ADE20K and
   Cityscapes linear segmentation remain future work.
@@ -176,25 +185,29 @@ Known limitations:
 
 Planned research and engineering work:
 
-1. Retrieve and hash the missing checkpoint labels and every independent
-   session log, then rerun the schedule audit until it can issue a supported
-   verdict.
+1. Retrieve every independent session log into source-specific directories
+   and rerun the audit to localize LR/WD boundary behavior. Logs can strengthen
+   the boundary evidence but cannot turn the already observed schedule
+   identity changes into a clean continuous horizon.
 2. Rerun VOC at epochs `180 / 250 / 318` with probe seeds
    `42 / 1337 / 2027`; report per-seed rows, mean, sample SD, and paired
    changes from `global_confusion_v2`, using
-   `--checkpoint_key teacher` explicitly.
+   `--checkpoint_key teacher` explicitly. Treat these stitched-run results as
+   exploratory characterization.
 3. Estimate a fixed post-peak trend rather than relying on a post-hoc
    best-versus-final contrast.
 4. Run the COCO-Stuff selected-checkpoint evaluator on the same phenomenon
    window, with the same probe seeds and teacher key, and compare it with
    matching v2 VOC and raw/L2 structural diagnostics.
-5. Freeze the primary representation, one initial fork, endpoint, equivalence
-   margin, stopping rule, and kill criterion before viewing an intervention.
-6. If the phenomenon gate passes, migrate CLS-CRR and run one matched
-   C0-versus-C1 fork. Defer a late KoLeo arm and additional fork points until
-   C1 has a positive late-stage result.
-7. Continue pretraining or add a from-scratch confirmation only when the
-   predeclared first-stage decision justifies the additional budget.
+5. Freeze a clean, fixed-horizon phenomenon reproduction with the primary
+   representation, schedule, endpoint, probe protocol, and seed handling
+   declared before training.
+6. Only if that clean-horizon phenomenon gate passes, freeze one intervention
+   fork, equivalence margin, stopping rule, and kill criterion, then migrate
+   CLS-CRR for a matched C0-versus-C1 run.
+7. Defer a late KoLeo arm, additional fork points, and from-scratch
+   confirmation until the predeclared first-stage result justifies the
+   additional budget.
 
 ## Key Files
 
