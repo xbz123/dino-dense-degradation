@@ -19,6 +19,7 @@ import re
 import sys
 import json
 import math
+import random
 import argparse
 import difflib
 import numpy as np
@@ -473,13 +474,23 @@ def extract_features(model, dataloader, device, feature_dtype=torch.float16):
     return features, targets_all
 
 
+def set_probe_seed(seed):
+    """Reset probe RNGs so checkpoint comparisons use matched randomness."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 def train_linear_head(features_train, targets_train, features_val, targets_val,
                       embed_dim, num_classes, patch_size, img_size, device,
                       epochs=15, lr=0.01, batch_size=32, optimizer_name='adam',
-                      loss_resolution='image'):
+                      loss_resolution='image', seed=42):
     """Train linear segmentation head and return validation mIoU."""
     if loss_resolution not in {'image', 'patch'}:
         raise ValueError(f"Unsupported loss_resolution: {loss_resolution}")
+    set_probe_seed(seed)
     head = LinearSegHead(embed_dim, num_classes, patch_size, img_size).to(device)
     if optimizer_name == 'adam':
         optimizer = torch.optim.Adam(head.parameters(), lr=lr)
@@ -605,6 +616,8 @@ def main():
     parser.add_argument('--optimizer', type=str, default='adam',
                         choices=['adam', 'sgd'],
                         help='Linear-head optimizer. Adam matches the paper-style notebook setting.')
+    parser.add_argument('--probe_seed', type=int, default=42,
+                        help='RNG seed reset before each checkpoint linear probe')
     parser.add_argument('--feature_dtype', type=str, default='float16',
                         choices=['float16', 'float32'],
                         help='CPU dtype for cached patch features; float16 saves Colab RAM')
@@ -621,6 +634,7 @@ def main():
     feature_dtype = torch.float16 if args.feature_dtype == 'float16' else torch.float32
     print(f"Cached feature dtype: {args.feature_dtype}")
     print(f"Linear-head optimizer: {args.optimizer}")
+    print(f"Linear-probe seed: {args.probe_seed}")
 
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -699,10 +713,15 @@ def main():
             lr=args.lr,
             batch_size=args.batch_size,
             optimizer_name=args.optimizer,
+            seed=args.probe_seed,
         )
 
         print(f"  ✅ Epoch {epoch}: mIoU = {miou * 100:.2f}%")
-        results.append({'epoch': epoch, 'miou': miou * 100})
+        results.append({
+            'epoch': epoch,
+            'miou': miou * 100,
+            'probe_seed': args.probe_seed,
+        })
 
         # Free extracted features
         del features_train, targets_train, features_val, targets_val

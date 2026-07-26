@@ -44,5 +44,6 @@ def test_colab_notebook_can_run_all_eval_stages_without_runtime_patching():
     assert "'--ckpt_dir', str(WORK_CKPT_DIR)" in source
     assert "'--output_dir', str(VOC_OUTPUT_DIR)" in source
     assert "'--optimizer', VOC_OPTIMIZER" in source
+    assert "'--probe_seed', str(VOC_PROBE_SEED)" in source
     assert "txt.replace(old, new)" not in source
     assert "optimizer patch" not in source.lower()

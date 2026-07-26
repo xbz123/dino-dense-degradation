@@ -1,13 +1,35 @@
 import math
+import random
 import sys
 from pathlib import Path
 
+import numpy as np
 import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import eval_voc_dense
+
+
+def test_set_probe_seed_replays_all_probe_rngs():
+    eval_voc_dense.set_probe_seed(2027)
+    first = (
+        random.random(),
+        np.random.rand(3),
+        torch.rand(3),
+    )
+
+    eval_voc_dense.set_probe_seed(2027)
+    second = (
+        random.random(),
+        np.random.rand(3),
+        torch.rand(3),
+    )
+
+    assert first[0] == second[0]
+    np.testing.assert_array_equal(first[1], second[1])
+    torch.testing.assert_close(first[2], second[2], rtol=0, atol=0)
 
 
 def test_train_linear_head_patch_loss_uses_patch_grid_targets(monkeypatch):

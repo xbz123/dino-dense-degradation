@@ -114,6 +114,11 @@ MyDrive/dino_dense_degradation_eval/to_epoch_XXXX/
 
 where `XXXX` is the largest checkpoint epoch found in the Drive folder.
 
+VOC probe randomness is explicit. `eval_voc_dense.py` accepts
+`--probe_seed`, resets that seed before every checkpoint head fit, and records
+it in `voc_miou_results.json`. The notebooks expose the same setting as
+`VOC_PROBE_SEED`; use separate output suffixes when measuring multiple seeds.
+
 The notebook is a thin Colab wrapper around these repository scripts:
 
 - `eval_coco_stuff_dense.py`: runs selected-checkpoint COCO-Stuff

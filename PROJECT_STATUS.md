@@ -56,6 +56,8 @@ The evaluation workflow:
 - Loads a series of DINO checkpoints.
 - Freezes the DINO backbone.
 - Trains a lightweight 1x1 convolutional segmentation head.
+- Resets an explicit probe seed before every checkpoint head fit and records
+  that seed in the output JSON.
 - Reports validation mIoU for each checkpoint.
 - Produces an `mIoU vs. epoch` plot for dense degradation analysis.
 
@@ -131,6 +133,10 @@ Known limitations:
 - `eval_voc_dense.py` is a lightweight frozen-backbone VOC linear-probing
   runner for trend analysis, not a full reproduction of every downstream
   setting in the SDD paper.
+- Historical VOC rows were generated before the evaluator recorded an explicit
+  probe seed. The apparent epoch-180 peak versus epoch-318 endpoint must be
+  rerun with multiple fixed probe seeds before it defines a degradation window
+  or intervention fork.
 - COCO-Stuff selected-checkpoint evaluation is now implemented, but full
   COCO-Stuff results have not yet been run in this checkout. ADE20K and
   Cityscapes linear segmentation remain future work.
@@ -142,18 +148,20 @@ Known limitations:
 
 Planned research and engineering work:
 
-1. Run dense evaluation across checkpoint snapshots and inspect the resulting
-   mIoU curve.
-2. Compare dense evaluation results with logged diagnostics such as effective
-   rank and CLS-patch cosine similarity.
-3. Compare VOC mIoU with the Colab notebook's DSE class separability,
-   effective-rank, patch-statistic, and CLS-attention outputs.
-4. Run the COCO-Stuff selected-checkpoint evaluator on
-   `50 / 80 / 180 / 220 / 300 / 318` and compare the curve with VOC and DSE.
-5. Continue pretraining toward the target training horizon where needed.
-6. Use the confirmed degradation pattern to evaluate mitigation strategies,
-   such as dense contrastive objectives or architectural changes that preserve
-   local representations.
+1. Rerun VOC at epochs `180 / 250 / 318` with probe seeds
+   `42 / 1337 / 2027`; report per-seed rows, mean, sample SD, and paired
+   changes.
+2. Estimate a fixed post-peak trend rather than relying on a post-hoc
+   best-versus-final contrast.
+3. Run the COCO-Stuff selected-checkpoint evaluator on the same phenomenon
+   window and compare it with VOC and raw/L2 structural diagnostics.
+4. Freeze the primary representation, one initial fork, endpoint, equivalence
+   margin, stopping rule, and kill criterion before viewing an intervention.
+5. If the phenomenon gate passes, migrate CLS-CRR and run one matched
+   C0-versus-C1 fork. Defer a late KoLeo arm and additional fork points until
+   C1 has a positive late-stage result.
+6. Continue pretraining or add a from-scratch confirmation only when the
+   predeclared first-stage decision justifies the additional budget.
 
 ## Key Files
 

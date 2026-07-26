@@ -4,6 +4,23 @@ This file tracks the current task breakdown for the DINO dense degradation
 project. Keep tasks concrete and update checkboxes as work lands in the
 repository or external experiment outputs are confirmed.
 
+## Priority 0: Reproducibility And Phenomenon Gate
+
+- [x] Add an explicit VOC `--probe_seed`, reset it before every checkpoint
+  head fit, and record it in the result JSON.
+- [x] Expose `VOC_PROBE_SEED` in the existing Colab and Kaggle notebooks.
+- [ ] Rerun epochs `180 / 250 / 318` with probe seeds
+  `42 / 1337 / 2027`.
+- [ ] Report per-seed VOC rows, within-checkpoint mean/sample SD, and paired
+  checkpoint changes.
+- [ ] Estimate a fixed post-peak slope or contrast without selecting the best
+  checkpoint after viewing the reruns.
+- [ ] Run COCO-Stuff on the same selected phenomenon window.
+- [ ] Freeze the first late-stage C0/C1 fork, endpoint, equivalence margin,
+  stopping rule, and kill criterion.
+- [ ] Do not add a late KoLeo arm or more fork points unless the first C1
+  intervention passes its predeclared gate.
+
 ## Priority 1: Colab Evaluation From Current Checkpoints
 
 - [x] Fix `DSE_IMAGE_ROOT` lookup so lowercase `imagenet100/train` is tried

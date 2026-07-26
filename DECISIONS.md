@@ -97,6 +97,47 @@ Rationale:
 - It is fast enough to run across many checkpoints.
 - It provides a stable baseline for comparing structural diagnostics.
 
+### Decision: VOC probe randomness is explicit and matched across checkpoints
+
+Default:
+
+```text
+--probe_seed 42
+```
+
+`eval_voc_dense.py` resets Python, NumPy, PyTorch, and CUDA RNG state before
+every checkpoint's linear-head initialization. It also records `probe_seed` in
+each output row.
+
+Rationale:
+
+- The previous `torch.randperm` path had no explicit seed, so the same
+  checkpoint could change across reruns.
+- Resetting per checkpoint gives the sweep common random numbers and prevents
+  checkpoint discovery order from changing later head initializations.
+- Probe-seed repeats quantify head-fitting noise; they do not replace
+  independent backbone-training seeds.
+- Exact bitwise CUDA reproducibility is not promised for kernels that are
+  nondeterministic on the selected runtime.
+
+### Decision: Establish the late-stage phenomenon before migrating mitigation
+
+The first gate uses fixed epochs `180`, `250`, and `318`, probe seeds `42`,
+`1337`, and `2027`, a predeclared post-peak trend, and selected-checkpoint
+COCO-Stuff.
+
+Rationale:
+
+- A post-hoc peak-versus-final difference is biased toward the selected peak
+  and has no meaning until probe variance is bounded.
+- Fork-point selection must follow the noise/trend review, not the most
+  favorable intervention result.
+- The first late-stage mitigation should migrate only CLS-CRR and compare one
+  matched C0/C1 fork. A KoLeo arm is useful for specificity but can wait until
+  C1 efficacy is established.
+- The equivalence margin, stopping rule, and kill criterion must be frozen
+  before the intervention run.
+
 ### Decision: DSE and patch diagnostics are required companion evidence
 
 The following diagnostics should accompany VOC mIoU:

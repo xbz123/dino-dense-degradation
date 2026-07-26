@@ -71,3 +71,4 @@ def test_kaggle_eval_notebook_can_run_voc_when_enabled():
     assert "'--ckpt_dir', str(WORK_CKPT_DIR)" in source
     assert "'--output_dir', str(VOC_OUTPUT_DIR)" in source
     assert "'--optimizer', VOC_OPTIMIZER" in source
+    assert "'--probe_seed', str(VOC_PROBE_SEED)" in source

@@ -16,11 +16,35 @@ The project is currently positioned as a diagnostic suite, not as a claim that t
 
 The working claim is:
 
-> Under the current ImageNet-100 + DINO ViT-S/16 + PASCAL VOC linear segmentation setup, VOC mIoU alone has not yet shown a clear downstream dense degradation drop up to the latest evaluated checkpoints. The next step is to inspect structural patch-level diagnostics and continue training to longer horizons.
+> The existing ImageNet-100 + DINO ViT-S/16 VOC sweep contains an apparent
+> peak-to-final decline, but the historical head fits did not record or reset a
+> probe seed. Until repeated fixed-checkpoint probes bound that noise, the
+> curve is a phenomenon signal rather than confirmed SDD evidence.
 
 Current correction:
 
 > The previous raw-feature DSE/class-separability trend is a warning signal, not final evidence of angular structural degradation. Patch feature norms changed strongly during training, so the next validation run must compare raw final-LayerNorm patch tokens against L2-normalized patch tokens.
+
+## Immediate Scientific Gate
+
+Complete these steps before implementing a late-stage mitigation:
+
+1. Use explicit probe seeds `42`, `1337`, and `2027`. The evaluator resets the
+   selected seed before each checkpoint so head initialization and minibatch
+   order are matched across the curve.
+2. Rerun VOC at fixed epochs `180`, `250`, and `318`; report every seed, mean,
+   sample standard deviation, and paired checkpoint changes.
+3. Estimate a predeclared post-peak trend instead of selecting the maximum
+   after viewing the curve.
+4. Run the existing COCO-Stuff evaluator on the same selected checkpoints.
+5. Freeze the intervention fork, primary contrast, equivalence margin, stop
+   rule, and kill criterion from those measurements.
+
+If the gate passes, the first late-stage experiment uses one fork and only two
+matched arms: C0 continuation and CLS-CRR continuation. Epoch 150 or 180 is the
+initial prevention candidate; epoch 220 is a later rescue tier. A KoLeo arm is
+deferred until C1 shows a positive late-stage effect, which limits the first
+migration to one regularizer.
 
 ## Implementation Order
 
