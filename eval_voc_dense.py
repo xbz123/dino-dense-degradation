@@ -22,6 +22,8 @@ import math
 import random
 import argparse
 import difflib
+import hashlib
+import subprocess
 import numpy as np
 from functools import partial
 from collections import OrderedDict
@@ -32,9 +34,39 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision import transforms, datasets
 
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
+
+GLOBAL_CONFUSION_METRIC_VERSION = 'global_confusion_v2'
+VOC_V2_RESULTS_FILENAME = 'voc_miou_results_global_confusion_v2.json'
+
+
+def file_sha256(path, chunk_size=8 * 1024 * 1024):
+    """Return the SHA256 of an artifact without loading it into memory."""
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        for chunk in iter(lambda: handle.read(chunk_size), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def get_source_state(repo_dir=None):
+    """Return the full Git commit and tracked/untracked dirty state."""
+    repo_dir = repo_dir or os.path.dirname(os.path.abspath(__file__))
+    try:
+        commit = subprocess.run(
+            ['git', '-C', repo_dir, 'rev-parse', 'HEAD'],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        status = subprocess.run(
+            ['git', '-C', repo_dir, 'status', '--porcelain'],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return {'source_commit': None, 'source_dirty': True}
+    return {'source_commit': commit, 'source_dirty': bool(status.strip())}
 
 
 # =====================================================================
@@ -323,6 +355,26 @@ def compute_miou(pred, target, num_classes=21, ignore_index=255):
     return np.mean(ious)
 
 
+def compute_confusion_counts(pred, target, num_classes=21, ignore_index=255):
+    """Per-class intersection/union pixel counts for one batch (int64 CPU tensors).
+
+    Accumulating these over the whole validation set and then averaging
+    per-class IoU is the standard mIoU ("global_confusion_v2"). The older
+    per-batch mIoU average is kept separately as "batch_mean_v1".
+    """
+    pred = pred.reshape(-1)
+    target = target.reshape(-1)
+    valid = target != ignore_index
+    intersections = torch.zeros(num_classes, dtype=torch.long)
+    unions = torch.zeros(num_classes, dtype=torch.long)
+    for cls in range(num_classes):
+        pred_cls = (pred == cls) & valid
+        target_cls = (target == cls) & valid
+        intersections[cls] = int((pred_cls & target_cls).sum().item())
+        unions[cls] = int((pred_cls | target_cls).sum().item())
+    return intersections, unions
+
+
 def resize_segmentation_target(target, size):
     """Nearest-neighbor resize target masks to a spatial size."""
     if tuple(target.shape[-2:]) == tuple(size):
@@ -338,21 +390,12 @@ def resize_segmentation_target(target, size):
 # 5. Load DINO checkpoint into backbone
 # =====================================================================
 
-def load_dino_backbone(ckpt_path, arch='vit_small', patch_size=16):
-    """Load a DINO checkpoint and return the frozen teacher backbone."""
-    model = vit_small(patch_size=patch_size)
+def load_backbone_state(model, state_dict, allow_partial=False):
+    """Clean DDP/wrapper prefixes, drop head keys, and load strictly by default.
 
-    checkpoint = torch.load(ckpt_path, map_location='cpu', weights_only=False)
-
-    # Try to load teacher weights (preferred) or student weights
-    if 'teacher' in checkpoint:
-        state_dict = checkpoint['teacher']
-    elif 'student' in checkpoint:
-        state_dict = checkpoint['student']
-    else:
-        state_dict = checkpoint
-
-    # Clean up state dict keys
+    A correct DINO checkpoint matches the backbone exactly after cleanup, so
+    any missing/unexpected key indicates the wrong file or a broken export.
+    """
     new_state_dict = OrderedDict()
     for k, v in state_dict.items():
         # Remove 'module.' prefix (from DDP)
@@ -364,8 +407,35 @@ def load_dino_backbone(ckpt_path, arch='vit_small', patch_size=16):
             continue
         new_state_dict[k] = v
 
-    msg = model.load_state_dict(new_state_dict, strict=False)
-    print(f"  Loaded backbone from {os.path.basename(ckpt_path)}: {msg}")
+    return model.load_state_dict(new_state_dict, strict=not allow_partial)
+
+
+def load_dino_backbone(
+    ckpt_path,
+    arch='vit_small',
+    patch_size=16,
+    checkpoint_key='teacher',
+    allow_partial=False,
+):
+    """Load one explicitly selected DINO representation into a frozen backbone."""
+    if checkpoint_key not in {'teacher', 'student'}:
+        raise ValueError(f"Unsupported checkpoint key: {checkpoint_key}")
+    model = vit_small(patch_size=patch_size)
+
+    checkpoint = torch.load(ckpt_path, map_location='cpu', weights_only=False)
+    if not isinstance(checkpoint, dict) or checkpoint_key not in checkpoint:
+        available = sorted(checkpoint) if isinstance(checkpoint, dict) else []
+        raise KeyError(
+            f"Checkpoint {ckpt_path} does not contain required key "
+            f"'{checkpoint_key}'; available keys: {available}"
+        )
+    state_dict = checkpoint[checkpoint_key]
+
+    msg = load_backbone_state(model, state_dict, allow_partial=allow_partial)
+    print(
+        f"  Loaded {checkpoint_key} backbone from "
+        f"{os.path.basename(ckpt_path)}: {msg}"
+    )
 
     # Freeze all backbone parameters
     for param in model.parameters():
@@ -486,8 +556,12 @@ def set_probe_seed(seed):
 def train_linear_head(features_train, targets_train, features_val, targets_val,
                       embed_dim, num_classes, patch_size, img_size, device,
                       epochs=15, lr=0.01, batch_size=32, optimizer_name='adam',
-                      loss_resolution='image', seed=42):
-    """Train linear segmentation head and return validation mIoU."""
+                      loss_resolution='image', seed=42, return_stats=False):
+    """Train a linear head.
+
+    By default this preserves the historical float API and batch-mean mIoU
+    semantics. Metric-v2 callers must request the full global-confusion stats.
+    """
     if loss_resolution not in {'image', 'patch'}:
         raise ValueError(f"Unsupported loss_resolution: {loss_resolution}")
     set_probe_seed(seed)
@@ -530,9 +604,16 @@ def train_linear_head(features_train, targets_train, features_val, targets_val,
 
         scheduler.step()
 
-    # Evaluate on validation set
+    # Evaluate on validation set.
+    # metric v2: accumulate per-class intersection/union over the WHOLE val
+    # set, then average per-class IoU (standard mIoU). The legacy per-batch
+    # mIoU mean is kept alongside so old curves can be cross-calibrated, but
+    # the two must never be mixed in one table.
     head.eval()
     all_miou = []
+    num_classes_int = int(num_classes)
+    total_intersections = torch.zeros(num_classes_int, dtype=torch.long)
+    total_unions = torch.zeros(num_classes_int, dtype=torch.long)
     with torch.no_grad():
         for i in range(0, features_val.shape[0], batch_size):
             feat = features_val[i:i + batch_size].to(device=device, dtype=torch.float32)
@@ -542,8 +623,29 @@ def train_linear_head(features_train, targets_train, features_val, targets_val,
             pred = logits.argmax(dim=1)
             miou = compute_miou(pred, tgt, num_classes=num_classes)
             all_miou.append(miou)
+            batch_inter, batch_union = compute_confusion_counts(
+                pred.cpu(), tgt.cpu(), num_classes=num_classes_int, ignore_index=255
+            )
+            total_intersections += batch_inter
+            total_unions += batch_union
 
-    return np.mean(all_miou)
+    per_class_iou = [
+        float(total_intersections[cls].item()) / float(total_unions[cls].item())
+        if int(total_unions[cls].item()) > 0
+        else None
+        for cls in range(num_classes_int)
+    ]
+    present = [iou for iou in per_class_iou if iou is not None]
+    stats = {
+        'miou_global': float(np.mean(present)) if present else 0.0,
+        'miou_batch_mean': float(np.mean(all_miou)),
+        'per_class_iou': per_class_iou,
+        'metric_version': GLOBAL_CONFUSION_METRIC_VERSION,
+        'legacy_metric_version': 'batch_mean_v1',
+    }
+    if return_stats:
+        return stats
+    return stats['miou_batch_mean']
 
 
 # =====================================================================
@@ -552,6 +654,10 @@ def train_linear_head(features_train, targets_train, features_val, targets_val,
 
 def plot_degradation_curve(results, output_path):
     """Plot mIoU vs Epoch, mimicking the paper's style."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
     epochs = [r['epoch'] for r in results]
     mious = [r['miou'] for r in results]
 
@@ -618,6 +724,12 @@ def main():
                         help='Linear-head optimizer. Adam matches the paper-style notebook setting.')
     parser.add_argument('--probe_seed', type=int, default=42,
                         help='RNG seed reset before each checkpoint linear probe')
+    parser.add_argument('--checkpoint_key', type=str, default='teacher',
+                        choices=['teacher', 'student'],
+                        help='Checkpoint representation to evaluate')
+    parser.add_argument('--allow_partial_load', action='store_true',
+                        help='Accept checkpoints whose backbone keys do not match exactly '
+                             '(default: refuse, to prevent silent partial loads)')
     parser.add_argument('--feature_dtype', type=str, default='float16',
                         choices=['float16', 'float32'],
                         help='CPU dtype for cached patch features; float16 saves Colab RAM')
@@ -635,6 +747,7 @@ def main():
     print(f"Cached feature dtype: {args.feature_dtype}")
     print(f"Linear-head optimizer: {args.optimizer}")
     print(f"Linear-probe seed: {args.probe_seed}")
+    print(f"Checkpoint representation: {args.checkpoint_key}")
 
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -673,13 +786,41 @@ def main():
     print("=" * 60)
 
     embed_dim = 384  # vit_small
+    source_state = get_source_state()
+    dataset_identity = {
+        'name': 'PASCAL VOC 2012',
+        'root': os.path.realpath(args.voc_root),
+        'train_split': 'train',
+        'val_split': 'val',
+        'train_images': len(train_dataset),
+        'val_images': len(val_dataset),
+    }
+    probe_config = {
+        'arch': args.arch,
+        'patch_size': args.patch_size,
+        'img_size': args.img_size,
+        'train_epochs': args.train_epochs,
+        'lr': args.lr,
+        'batch_size': args.batch_size,
+        'optimizer': args.optimizer,
+        'feature_dtype': args.feature_dtype,
+        'allow_partial_load': args.allow_partial_load,
+    }
+    print(
+        f"Source commit: {source_state['source_commit']} "
+        f"(dirty={source_state['source_dirty']})"
+    )
 
     results = []
     for i, (epoch, ckpt_path) in enumerate(ckpt_files):
         print(f"\n[{i + 1}/{len(ckpt_files)}] Evaluating Epoch {epoch}...")
+        checkpoint_digest = file_sha256(ckpt_path)
+        print(f"  Checkpoint SHA256: {checkpoint_digest}")
 
         # Load frozen backbone
-        model = load_dino_backbone(ckpt_path, arch=args.arch, patch_size=args.patch_size)
+        model = load_dino_backbone(ckpt_path, arch=args.arch, patch_size=args.patch_size,
+                                   checkpoint_key=args.checkpoint_key,
+                                   allow_partial=args.allow_partial_load)
         model = model.to(device)
 
         # Extract features (frozen backbone, no gradients)
@@ -701,7 +842,7 @@ def main():
 
         # Train linear head and evaluate
         print(f"  Training linear head ({args.train_epochs} epochs)...")
-        miou = train_linear_head(
+        probe_stats = train_linear_head(
             features_train, targets_train,
             features_val, targets_val,
             embed_dim=embed_dim,
@@ -714,13 +855,31 @@ def main():
             batch_size=args.batch_size,
             optimizer_name=args.optimizer,
             seed=args.probe_seed,
+            return_stats=True,
         )
+        miou = probe_stats['miou_global']
+        miou_v1 = probe_stats['miou_batch_mean']
 
-        print(f"  ✅ Epoch {epoch}: mIoU = {miou * 100:.2f}%")
+        print(f"  ✅ Epoch {epoch}: mIoU(global_confusion_v2) = {miou * 100:.2f}%  "
+              f"[legacy batch_mean_v1 = {miou_v1 * 100:.2f}%]")
         results.append({
             'epoch': epoch,
             'miou': miou * 100,
+            'per_class_iou': [
+                value * 100 if value is not None else None
+                for value in probe_stats['per_class_iou']
+            ],
+            'metric_version': GLOBAL_CONFUSION_METRIC_VERSION,
             'probe_seed': args.probe_seed,
+            'checkpoint_key': args.checkpoint_key,
+            'representation': (
+                'ema_teacher' if args.checkpoint_key == 'teacher' else 'student'
+            ),
+            'checkpoint': str(ckpt_path),
+            'checkpoint_sha256': checkpoint_digest,
+            'probe_config': probe_config,
+            'dataset_identity': dataset_identity,
+            **source_state,
         })
 
         # Free extracted features
@@ -733,7 +892,7 @@ def main():
     print("=" * 60)
 
     # Save raw results as JSON
-    results_path = os.path.join(args.output_dir, 'voc_miou_results.json')
+    results_path = os.path.join(args.output_dir, VOC_V2_RESULTS_FILENAME)
     with open(results_path, 'w') as f:
         json.dump(results, f, indent=2)
     print(f"Results saved to: {results_path}")
@@ -755,7 +914,10 @@ def main():
     print(f"Diff:  {change:.2f}% ({trend})")
 
     # Generate plot
-    plot_path = os.path.join(args.output_dir, 'dense_degradation_voc.png')
+    plot_path = os.path.join(
+        args.output_dir,
+        'dense_degradation_voc_global_confusion_v2.png',
+    )
     plot_degradation_curve(results, plot_path)
 
     print("\n🎉 All done!")

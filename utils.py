@@ -24,6 +24,7 @@ import math
 import random
 import datetime
 import subprocess
+import warnings
 from collections import defaultdict, deque
 
 import numpy as np
@@ -165,15 +166,23 @@ def restart_from_checkpoint(ckp_path, run_variables=None, **kwargs):
     # example: {'state_dict': model}
     for key, value in kwargs.items():
         if key in checkpoint and value is not None:
-            try:
-                msg = value.load_state_dict(checkpoint[key], strict=False)
-                print("=> loaded '{}' from checkpoint '{}' with msg {}".format(key, ckp_path, msg))
-            except TypeError:
-                try:
-                    msg = value.load_state_dict(checkpoint[key])
-                    print("=> loaded '{}' from checkpoint: '{}'".format(key, ckp_path))
-                except ValueError:
-                    print("=> failed to load '{}' from checkpoint: '{}'".format(key, ckp_path))
+            if isinstance(value, nn.Module):
+                allow_partial = os.environ.get('DINO_ALLOW_PARTIAL_RESTORE') == '1'
+                msg = value.load_state_dict(checkpoint[key], strict=not allow_partial)
+                if allow_partial:
+                    missing = list(getattr(msg, 'missing_keys', []) or [])
+                    unexpected = list(getattr(msg, 'unexpected_keys', []) or [])
+                    if missing or unexpected:
+                        warnings.warn(
+                            "Partially restored '{}' from '{}': missing={} unexpected={}".format(
+                                key, ckp_path, missing[:5], unexpected[:5]),
+                            RuntimeWarning,
+                        )
+                print("=> loaded '{}' from checkpoint '{}' with msg {}".format(
+                    key, ckp_path, msg))
+            else:
+                value.load_state_dict(checkpoint[key])
+                print("=> loaded '{}' from checkpoint: '{}'".format(key, ckp_path))
         else:
             print("=> key '{}' not found in checkpoint: '{}'".format(key, ckp_path))
 

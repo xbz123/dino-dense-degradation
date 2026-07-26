@@ -46,11 +46,13 @@ def test_kaggle_eval_notebook_keeps_checkpoint_copies_out_of_saved_output():
     assert "WORK_CKPT_DIR = Path('/kaggle/working/dino_eval_checkpoints')" not in source
 
 
-def test_kaggle_eval_notebook_can_reuse_any_attached_voc_json():
+def test_kaggle_eval_notebook_reuses_only_attached_metric_v2_voc_json():
     source = NOTEBOOK.read_text()
 
     assert "VOC_JSON_CANDIDATES.extend" in source
-    assert "glob('to_epoch_*/voc_all_checkpoints/voc_miou_results.json')" in source
+    assert "glob(f'to_epoch_*/voc_all_checkpoints/{VOC_RESULTS_FILENAME}')" in source
+    assert "VOC_RESULTS_FILENAME = 'voc_miou_results_global_confusion_v2.json'" in source
+    assert "glob('to_epoch_*/voc_all_checkpoints/voc_miou_results.json')" not in source
 
 
 def test_kaggle_eval_notebook_exposes_independent_run_toggles():
@@ -64,6 +66,12 @@ def test_kaggle_eval_notebook_exposes_independent_run_toggles():
 
 def test_kaggle_eval_notebook_can_run_voc_when_enabled():
     source = NOTEBOOK.read_text()
+    notebook = json.loads(source)
+    code_source = "\n".join(
+        "".join(cell.get("source", []))
+        for cell in notebook["cells"]
+        if cell.get("cell_type") == "code"
+    )
 
     assert "NotImplementedError" not in source
     assert "eval_voc_dense.py" in source
@@ -72,3 +80,15 @@ def test_kaggle_eval_notebook_can_run_voc_when_enabled():
     assert "'--output_dir', str(VOC_OUTPUT_DIR)" in source
     assert "'--optimizer', VOC_OPTIMIZER" in source
     assert "'--probe_seed', str(VOC_PROBE_SEED)" in source
+    assert "'--checkpoint_key', VOC_CHECKPOINT_KEY" in source
+    assert "VOC_CHECKPOINT_KEY == CHECKPOINT_KEY" in source
+    assert code_source.index("VOC_CHECKPOINT_KEY = 'teacher'") < code_source.index(
+        "assert VOC_CHECKPOINT_KEY == CHECKPOINT_KEY"
+    )
+    assert code_source.index("\nCHECKPOINT_KEY = 'teacher'") < code_source.index(
+        "assert VOC_CHECKPOINT_KEY == CHECKPOINT_KEY"
+    )
+    assert "'--voc_protocol', VOC_PROTOCOL" in source
+    assert "'--voc_metric_version', VOC_METRIC_VERSION" in source
+    assert "'--voc_probe_seed', str(VOC_PROBE_SEED)" in source
+    assert "'--voc_checkpoint_key', VOC_CHECKPOINT_KEY" in source

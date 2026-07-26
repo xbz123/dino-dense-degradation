@@ -58,8 +58,28 @@ The evaluation workflow:
 - Trains a lightweight 1x1 convolutional segmentation head.
 - Resets an explicit probe seed before every checkpoint head fit and records
   that seed in the output JSON.
-- Reports validation mIoU for each checkpoint.
+- Loads an explicitly selected `teacher` or `student` checkpoint key and records
+  that representation in each output row.
+- Reports validation mIoU from a full-validation-set confusion matrix under
+  `metric_version=global_confusion_v2`.
+- Records checkpoint SHA256, probe configuration, dataset identity, and Git
+  commit/dirty state in every result row; formal readers require
+  `source_dirty=false`.
 - Produces an `mIoU vs. epoch` plot for dense degradation analysis.
+
+Formal VOC and COCO files are
+`voc_miou_results_global_confusion_v2.json` and
+`coco_stuff_miou_results_global_confusion_v2.json`. Comparisons and report
+readers validate metric version, probe seed, checkpoint key, representation,
+and provenance before combining rows. Historical batch-mean-v1 JSON remains
+readable only through an explicit legacy mode and is never silently mixed with
+v2.
+
+`audit_training_schedule.py` separately audits checkpoint coordinates,
+schedule identities, independent session logs, log coverage, and reconstructed
+LR/weight-decay/teacher-momentum trajectories. Its verdict is `stitched`,
+`continuous`, or `unknown`; only sufficient `continuous` evidence supports
+interpreting the supplied checkpoints as one clean training horizon.
 
 The repository also includes a Colab notebook for the current Drive-based
 evaluation workflow:
@@ -102,8 +122,10 @@ standalone repository scripts so the workflow is easier to rerun and debug:
   patch similarity maps, and deterministic fixed-basis PCA maps of patch
   features.
 - `plot_dense_diagnostics.py` merges VOC mIoU with structural diagnostics and
-  writes the summary figure.
-- `make_summary_report.py` writes a compact Markdown report for each run.
+  writes the summary figure after validating the requested metric version,
+  probe seed, and checkpoint key.
+- `make_summary_report.py` writes a compact Markdown report for each run with
+  the VOC protocol identity recorded in the report.
 
 The notebook still controls the Colab environment: it mounts Google Drive,
 normalizes checkpoint filenames into a runtime directory, runs VOC linear
@@ -133,10 +155,16 @@ Known limitations:
 - `eval_voc_dense.py` is a lightweight frozen-backbone VOC linear-probing
   runner for trend analysis, not a full reproduction of every downstream
   setting in the SDD paper.
-- Historical VOC rows were generated before the evaluator recorded an explicit
-  probe seed. The apparent epoch-180 peak versus epoch-318 endpoint must be
-  rerun with multiple fixed probe seeds before it defines a degradation window
-  or intervention fork.
+- Historical VOC rows use the batch-mean-v1 mIoU estimator and were generated
+  before the evaluator recorded an explicit probe seed. The apparent epoch-180
+  peak versus epoch-318 endpoint is historical evidence only and must be rerun
+  under `global_confusion_v2` with multiple fixed probe seeds before it defines
+  a degradation window or intervention fork.
+- The metric-v2 code and notebook wiring are implemented, but the formal GPU
+  reruns and resulting v2 artifacts are not yet present in this checkout.
+- The local schedule audit covers only checkpoint labels 180 through 235, all
+  with one target-300 schedule identity, and has no independent session logs.
+  Its current verdict is `unknown`, not `continuous`.
 - COCO-Stuff selected-checkpoint evaluation is now implemented, but full
   COCO-Stuff results have not yet been run in this checkout. ADE20K and
   Cityscapes linear segmentation remain future work.
@@ -148,19 +176,24 @@ Known limitations:
 
 Planned research and engineering work:
 
-1. Rerun VOC at epochs `180 / 250 / 318` with probe seeds
+1. Retrieve and hash the missing checkpoint labels and every independent
+   session log, then rerun the schedule audit until it can issue a supported
+   verdict.
+2. Rerun VOC at epochs `180 / 250 / 318` with probe seeds
    `42 / 1337 / 2027`; report per-seed rows, mean, sample SD, and paired
-   changes.
-2. Estimate a fixed post-peak trend rather than relying on a post-hoc
+   changes from `global_confusion_v2`, using
+   `--checkpoint_key teacher` explicitly.
+3. Estimate a fixed post-peak trend rather than relying on a post-hoc
    best-versus-final contrast.
-3. Run the COCO-Stuff selected-checkpoint evaluator on the same phenomenon
-   window and compare it with VOC and raw/L2 structural diagnostics.
-4. Freeze the primary representation, one initial fork, endpoint, equivalence
+4. Run the COCO-Stuff selected-checkpoint evaluator on the same phenomenon
+   window, with the same probe seeds and teacher key, and compare it with
+   matching v2 VOC and raw/L2 structural diagnostics.
+5. Freeze the primary representation, one initial fork, endpoint, equivalence
    margin, stopping rule, and kill criterion before viewing an intervention.
-5. If the phenomenon gate passes, migrate CLS-CRR and run one matched
+6. If the phenomenon gate passes, migrate CLS-CRR and run one matched
    C0-versus-C1 fork. Defer a late KoLeo arm and additional fork points until
    C1 has a positive late-stage result.
-6. Continue pretraining or add a from-scratch confirmation only when the
+7. Continue pretraining or add a from-scratch confirmation only when the
    predeclared first-stage decision justifies the additional budget.
 
 ## Key Files
@@ -177,6 +210,9 @@ Planned research and engineering work:
 - `eval_voc_dense.py`: PASCAL VOC dense evaluation script.
 - `eval_coco_stuff_dense.py`: COCO-Stuff selected-checkpoint dense evaluation
   script.
+- `audit_training_schedule.py`: Read-only checkpoint/log schedule audit.
+- `REVIEW_BASELINE_2026-07-26.md`: Pinned commits, local artifact hashes,
+  coordinate contract, and missing external evidence inventory.
 - `notebooks/colab_dense_degradation_all_checkpoints.ipynb`: Colab workflow for
   evaluating all Drive checkpoints and exporting mIoU, DSE metrics, and
   qualitative patch/attention diagnostics.

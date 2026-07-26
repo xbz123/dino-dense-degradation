@@ -18,6 +18,9 @@ import matplotlib.pyplot as plt
 from dense_results_io import read_csv_rows, read_voc_results
 
 
+VOC_V2_METRIC_VERSION = "global_confusion_v2"
+
+
 def metric_values(rows: list[dict], metric: str) -> list[float]:
     values = []
     for row in rows:
@@ -34,15 +37,103 @@ def plot_metric(axis, rows: list[dict], metric: str, label: str | None = None, *
     return True
 
 
-def write_combined_summary(path: Path, rows: list[dict], voc_by_epoch: dict[int, float]) -> None:
+def read_protocol_voc_results(
+    path: str | Path | None,
+    *,
+    protocol: str,
+    metric_version: str | None,
+    probe_seed: int | None,
+    checkpoint_key: str | None,
+) -> tuple[dict[int, float], dict[str, str | int]]:
+    """Read validated v2 results or explicitly selected historical results."""
+    if path is None:
+        return {}, {
+            "metric_version": "",
+            "probe_seed": "",
+            "checkpoint_key": "",
+        }
+    if protocol == "legacy":
+        if any(value is not None for value in (metric_version, probe_seed, checkpoint_key)):
+            raise ValueError(
+                "Legacy VOC mode does not accept v2 protocol expectations"
+            )
+        rows = read_voc_results(path, as_rows=True)
+        unexpected_versions = {
+            row.get("metric_version")
+            for row in rows
+            if row.get("metric_version") not in (None, "batch_mean_v1")
+        }
+        if unexpected_versions:
+            raise ValueError(
+                "Legacy VOC mode accepts only unversioned or batch_mean_v1 rows; "
+                f"got {sorted(unexpected_versions)}"
+            )
+        return {int(row["epoch"]): float(row["miou"]) for row in rows}, {
+            "metric_version": "batch_mean_v1",
+            "probe_seed": "unrecorded",
+            "checkpoint_key": "unrecorded",
+        }
+    if protocol != "v2":
+        raise ValueError(f"Unsupported VOC protocol: {protocol}")
+    if metric_version is None or probe_seed is None or checkpoint_key is None:
+        raise ValueError(
+            "VOC v2 mode requires --voc_metric_version, --voc_probe_seed, "
+            "and --voc_checkpoint_key"
+        )
+    if metric_version != VOC_V2_METRIC_VERSION:
+        raise ValueError(
+            f"VOC v2 mode requires metric version {VOC_V2_METRIC_VERSION}; "
+            f"got {metric_version}"
+        )
+    return read_voc_results(
+        path,
+        expected_metric_version=metric_version,
+        expected_probe_seed=probe_seed,
+        expected_checkpoint_key=checkpoint_key,
+        require_provenance=True,
+    ), {
+        "metric_version": metric_version,
+        "probe_seed": probe_seed,
+        "checkpoint_key": checkpoint_key,
+    }
+
+
+def write_combined_summary(
+    path: Path,
+    rows: list[dict],
+    voc_by_epoch: dict[int, float],
+    *,
+    voc_metric_version: str | None = None,
+    voc_probe_seed: int | str | None = None,
+    voc_checkpoint_key: str | None = None,
+) -> None:
     if not rows:
         return
-    keys = ["epoch", "voc_miou"] + [key for key in rows[0].keys() if key != "epoch"]
+    if voc_by_epoch and any(
+        value is None
+        for value in (voc_metric_version, voc_probe_seed, voc_checkpoint_key)
+    ):
+        raise ValueError("VOC protocol metadata is required for a combined summary")
+    keys = [
+        "epoch",
+        "voc_miou",
+        "voc_metric_version",
+        "voc_probe_seed",
+        "voc_checkpoint_key",
+    ] + [key for key in rows[0].keys() if key != "epoch"]
     with path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=keys)
         writer.writeheader()
         for row in rows:
-            combined = {"epoch": row["epoch"], "voc_miou": voc_by_epoch.get(int(row["epoch"]), "")}
+            combined = {
+                "epoch": row["epoch"],
+                "voc_miou": voc_by_epoch.get(int(row["epoch"]), ""),
+                "voc_metric_version": voc_metric_version or "",
+                "voc_probe_seed": (
+                    voc_probe_seed if voc_probe_seed is not None else ""
+                ),
+                "voc_checkpoint_key": voc_checkpoint_key or "",
+            }
             combined.update({key: row.get(key, "") for key in keys if key not in combined})
             writer.writerow(combined)
 
@@ -122,11 +213,25 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--summary_csv", required=True)
     parser.add_argument("--voc_json", default=None)
+    parser.add_argument("--voc_protocol", choices=["v2", "legacy"], default="v2")
+    parser.add_argument("--voc_metric_version", default=None)
+    parser.add_argument("--voc_probe_seed", type=int, default=None)
+    parser.add_argument(
+        "--voc_checkpoint_key",
+        choices=["teacher", "student"],
+        default=None,
+    )
     parser.add_argument("--out_dir", required=True)
     args = parser.parse_args()
 
     rows = read_csv_rows(args.summary_csv)
-    voc_by_epoch = read_voc_results(args.voc_json)
+    voc_by_epoch, voc_metadata = read_protocol_voc_results(
+        args.voc_json,
+        protocol=args.voc_protocol,
+        metric_version=args.voc_metric_version,
+        probe_seed=args.voc_probe_seed,
+        checkpoint_key=args.voc_checkpoint_key,
+    )
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -142,7 +247,14 @@ def main():
         axes[0].legend()
     else:
         axes[0].text(0.5, 0.5, "VOC results not provided", ha="center", va="center")
-    axes[0].set_title("PASCAL VOC linear mIoU")
+    if voc_by_epoch:
+        protocol_label = (
+            f"{voc_metadata['metric_version']}, seed={voc_metadata['probe_seed']}, "
+            f"key={voc_metadata['checkpoint_key']}"
+        )
+        axes[0].set_title(f"PASCAL VOC linear mIoU\n{protocol_label}")
+    else:
+        axes[0].set_title("PASCAL VOC linear mIoU")
     axes[0].set_xlabel("checkpoint epoch")
     axes[0].grid(alpha=0.3)
 
@@ -202,7 +314,14 @@ def main():
 
     for path in plot_raw_l2_figures(rows, out_dir):
         print(f"saved raw/L2 figure: {path}")
-    write_combined_summary(out_dir / "combined_dense_summary.csv", rows, voc_by_epoch)
+    write_combined_summary(
+        out_dir / "combined_dense_summary.csv",
+        rows,
+        voc_by_epoch,
+        voc_metric_version=voc_metadata["metric_version"] or None,
+        voc_probe_seed=voc_metadata["probe_seed"],
+        voc_checkpoint_key=voc_metadata["checkpoint_key"] or None,
+    )
     print(f"saved figure: {fig_path}")
     print(f"saved combined summary: {out_dir / 'combined_dense_summary.csv'}")
 

@@ -147,7 +147,14 @@ print(f"Val classes: {len(os.listdir(val_path))}")
 
 ## 第五阶段：COCO-Stuff selected-checkpoint 验证
 
-这个阶段用于验证 PASCAL VOC 上看到的 post-epoch-180 dense drop 是否也出现在 COCO-Stuff 上。它**不重新训练 DINO backbone**，只对已保存的 checkpoint 做 frozen-backbone linear probing。
+这个阶段用于验证历史 PASCAL VOC batch-mean-v1 曲线中出现的
+post-epoch-180 dense drop，是否在修正后的 `global_confusion_v2` 协议和
+COCO-Stuff 上仍然存在。历史 v1 数值只作现象线索，不能进入正式比较或
+判定门。这个阶段**不重新训练 DINO backbone**，只对已保存的 checkpoint
+做 frozen-backbone linear probing。正式现象判定还要求
+`audit_training_schedule.py` 对所需 checkpoints 和每个独立 session
+`log.txt` 给出 `continuous`；`stitched` 或 `unknown` 不能按单一训练
+horizon 解释。
 
 ### 需要提前准备的 Kaggle Input
 
@@ -162,15 +169,14 @@ print(f"Val classes: {len(os.listdir(val_path))}")
 
 2. **DINO checkpoints**
    - 挂载包含历史 checkpoint 的 Kaggle Dataset。
-   - 目录里至少要有：
+   - 正式 COCO 一致性验证目录里至少要有：
      ```text
-     checkpoint0050.pth
-     checkpoint0080.pth
      checkpoint0180.pth
-     checkpoint0220.pth
-     checkpoint0300.pth
      checkpoint0318.pth
      ```
+   - VOC 主门另需 `checkpoint0250.pth`；调度审计按
+     `REVIEW_BASELINE_2026-07-26.md` 的清单补齐边界 checkpoint 和独立
+     session logs。
    - 示例路径：
      ```text
      /kaggle/input/datasets/bingzhouxie/dinockp/
@@ -199,11 +205,14 @@ print(f"Val classes: {len(os.listdir(val_path))}")
      ```
 
 4. **已有 VOC/DSE 结果（可选但推荐）**
-   - 如果要生成 `coco_voc_dse_comparison.csv`，挂载已有 raw/L2 run 输出：
+   - 如果要生成 `coco_voc_dse_comparison_global_confusion_v2.csv`，挂载
+     相同 probe seed、相同 checkpoint key 的 v2 VOC 和 raw/L2 输出：
      ```text
-     voc_all_checkpoints/voc_miou_results.json
+     voc_all_checkpoints/voc_miou_results_global_confusion_v2.json
      figures/combined_dense_summary.csv
      ```
+   - `voc_miou_results.json` 是历史 batch-mean-v1 结果，不能作为该比较的
+     输入。
 
 ### Smoke test：先只跑 180 和 318
 
@@ -222,6 +231,8 @@ print(f"Val classes: {len(os.listdir(val_path))}")
     --lr 0.0025 \
     --loss_resolution patch \
     --feature_dtype float16 \
+    --probe_seed 42 \
+    --checkpoint_key teacher \
     --max_train_images 2000 \
     --max_val_images 500 \
     --output_dir /kaggle/working/dino_dense_degradation_eval/to_epoch_0318_raw_l2/coco_stuff_selected_smoke
@@ -230,15 +241,18 @@ print(f"Val classes: {len(os.listdir(val_path))}")
 Smoke test 通过后，检查输出：
 
 ```text
-coco_stuff_miou_results.json
-dense_degradation_coco_stuff.png
-coco_voc_dse_comparison.csv
-coco_stuff_summary.md
+coco_stuff_miou_results_global_confusion_v2.json
+dense_degradation_coco_stuff_global_confusion_v2.png
+coco_stuff_summary_global_confusion_v2.md
 ```
+
+只有同时提供匹配的 `--voc_results_json` 时，才会额外生成
+`coco_voc_dse_comparison_global_confusion_v2.csv`。
 
 ### 正式 selected-checkpoint run
 
-正式最小验证跑 6 个 checkpoint：
+按 v10b gate，正式一致性验证只跑预注册的 `180 / 318`。更宽的 6-checkpoint
+曲线只能作为探索性附加结果，不能替换该配对比较：
 
 ```python
 %cd /kaggle/working/dino
@@ -246,23 +260,34 @@ coco_stuff_summary.md
 !python eval_coco_stuff_dense.py \
     --ckpt_dir /kaggle/input/datasets/bingzhouxie/dinockp \
     --coco_root /kaggle/input/datasets/dntai2/cocostuff-10k-v1-1 \
-    --epochs 50,80,180,220,300,318 \
+    --epochs 180,318 \
     --img_size 336 \
     --batch_size 64 \
     --train_epochs 15 \
     --lr 0.0025 \
     --loss_resolution patch \
     --feature_dtype float16 \
-    --voc_results_json /kaggle/input/dino-eval-results/to_epoch_0318_raw_l2/voc_all_checkpoints/voc_miou_results.json \
+    --probe_seed 42 \
+    --checkpoint_key teacher \
+    --voc_results_json /kaggle/input/dino-eval-results/to_epoch_0318_raw_l2/voc_all_checkpoints/voc_miou_results_global_confusion_v2.json \
     --dense_summary_csv /kaggle/input/dino-eval-results/to_epoch_0318_raw_l2/figures/combined_dense_summary.csv \
-    --output_dir /kaggle/working/dino_dense_degradation_eval/to_epoch_0318_raw_l2/coco_stuff_selected
+    --output_dir /kaggle/working/dino_dense_degradation_eval/to_epoch_0318_raw_l2/coco_stuff_selected_seed42_teacher
 ```
+
+对 `1337` 和 `2027` 分别重复正式命令，并使用 seed 专属输出目录。比较器
+会 fail closed：VOC 与 COCO 的 `metric_version` 必须都是
+`global_confusion_v2`，且 `probe_seed`、`checkpoint_key`、representation、
+checkpoint SHA256 和源码 commit/dirty 状态必须完全匹配。每行还必须保留
+probe 配方和数据身份，并满足 `source_dirty=false`。
 
 判断标准：
 
-- 如果 COCO-Stuff 也在 epoch 180 附近最好，并在 epoch 318 下降，说明 VOC drop 不是单一数据集现象。
-- 如果 COCO-Stuff 不下降，当前结论要保持谨慎，VOC drop 可能和 dataset/probe sensitivity 有关。
-- 如果曲线很 noisy，再只对 `180 / 300 / 318` 跑 3 个 seed，而不是立即扩大到全 checkpoint sweep。
+- 如果匹配协议的 COCO-Stuff v2 结果也在 epoch 180 附近最好，并在
+  epoch 318 下降，说明该方向不是 VOC 单一数据集现象。
+- 如果 COCO-Stuff v2 不下降，当前结论要保持谨慎，历史 VOC drop 可能
+  和 dataset/probe sensitivity 或旧 mIoU 估计器有关。
+- 如果曲线很 noisy，按预注册顺序对 `180 / 250 / 318` 使用
+  `{42, 1337, 2027}`，不要在看结果后更换 checkpoint 或 seed。
 
 ---
 

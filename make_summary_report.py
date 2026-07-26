@@ -9,6 +9,9 @@ from pathlib import Path
 from dense_results_io import read_csv_rows, read_voc_results
 
 
+VOC_V2_METRIC_VERSION = "global_confusion_v2"
+
+
 def fmt(value, digits=4):
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return "n/a"
@@ -23,7 +26,57 @@ def delta(first: dict, last: dict, metric: str) -> str:
     return f"{fmt(a)} -> {fmt(b)} ({b - a:+.4f})"
 
 
-def voc_section(voc_rows: list[dict]) -> list[str]:
+def read_protocol_voc_rows(
+    path: str | Path | None,
+    *,
+    protocol: str,
+    metric_version: str | None,
+    probe_seed: int | None,
+    checkpoint_key: str | None,
+) -> list[dict]:
+    """Read either validated v2 rows or explicitly requested historical rows."""
+    if path is None:
+        return []
+    if protocol == "legacy":
+        if any(value is not None for value in (metric_version, probe_seed, checkpoint_key)):
+            raise ValueError(
+                "Legacy VOC mode does not accept v2 protocol expectations"
+            )
+        rows = read_voc_results(path, as_rows=True)
+        unexpected_versions = {
+            row.get("metric_version")
+            for row in rows
+            if row.get("metric_version") not in (None, "batch_mean_v1")
+        }
+        if unexpected_versions:
+            raise ValueError(
+                "Legacy VOC mode accepts only unversioned or batch_mean_v1 rows; "
+                f"got {sorted(unexpected_versions)}"
+            )
+        return rows
+    if protocol != "v2":
+        raise ValueError(f"Unsupported VOC protocol: {protocol}")
+    if metric_version is None or probe_seed is None or checkpoint_key is None:
+        raise ValueError(
+            "VOC v2 mode requires --voc_metric_version, --voc_probe_seed, "
+            "and --voc_checkpoint_key"
+        )
+    if metric_version != VOC_V2_METRIC_VERSION:
+        raise ValueError(
+            f"VOC v2 mode requires metric version {VOC_V2_METRIC_VERSION}; "
+            f"got {metric_version}"
+        )
+    return read_voc_results(
+        path,
+        as_rows=True,
+        expected_metric_version=metric_version,
+        expected_probe_seed=probe_seed,
+        expected_checkpoint_key=checkpoint_key,
+        require_provenance=True,
+    )
+
+
+def voc_section(voc_rows: list[dict], *, protocol: str) -> list[str]:
     if not voc_rows:
         return [
             "## Downstream VOC",
@@ -40,6 +93,12 @@ def voc_section(voc_rows: list[dict]) -> list[str]:
         interpretation = "The final checkpoint is slightly below the best VOC checkpoint."
     else:
         interpretation = "The final checkpoint remains close to the best VOC checkpoint; VOC alone does not show a clear downstream degradation drop."
+    if protocol == "legacy":
+        interpretation = (
+            "Historical batch-mean-v1 evidence only; this curve is not eligible "
+            "for metric-v2 phenomenon confirmation or a v10 decision gate. "
+            + interpretation
+        )
     return [
         "## Downstream VOC",
         "",
@@ -50,6 +109,21 @@ def voc_section(voc_rows: list[dict]) -> list[str]:
         f"- Final minus best: {drop_from_best:+.3f}",
         "",
         interpretation,
+    ]
+
+
+def voc_provenance_lines(voc_rows: list[dict], *, protocol: str) -> list[str]:
+    if not voc_rows:
+        return ["- VOC provenance: not applicable"]
+    if protocol == "legacy":
+        return ["- VOC provenance: unavailable for historical batch-mean-v1 rows"]
+    first = voc_rows[0]
+    return [
+        f"- VOC representation: `{first['representation']}`",
+        f"- VOC source commit: `{first['source_commit']}`",
+        f"- VOC source dirty: `{first['source_dirty']}`",
+        f"- VOC dataset: `{first['dataset_identity'].get('name', 'unrecorded')}`",
+        f"- VOC checkpoint hashes recorded: `{len(voc_rows)}`",
     ]
 
 
@@ -93,11 +167,25 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--summary_csv", required=True)
     parser.add_argument("--voc_json", default=None)
+    parser.add_argument("--voc_protocol", choices=["v2", "legacy"], default="v2")
+    parser.add_argument("--voc_metric_version", default=None)
+    parser.add_argument("--voc_probe_seed", type=int, default=None)
+    parser.add_argument(
+        "--voc_checkpoint_key",
+        choices=["teacher", "student"],
+        default=None,
+    )
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
     rows = read_csv_rows(args.summary_csv)
-    voc_rows = read_voc_results(args.voc_json, as_rows=True)
+    voc_rows = read_protocol_voc_rows(
+        args.voc_json,
+        protocol=args.voc_protocol,
+        metric_version=args.voc_metric_version,
+        probe_seed=args.voc_probe_seed,
+        checkpoint_key=args.voc_checkpoint_key,
+    )
 
     lines = [
         "# Dense Degradation Diagnostics Report",
@@ -106,9 +194,32 @@ def main():
         "",
         f"- Patch diagnostics: `{args.summary_csv}`",
         f"- VOC results: `{args.voc_json}`" if args.voc_json else "- VOC results: not provided",
+        f"- VOC protocol: `{args.voc_protocol}`",
+        (
+            f"- VOC metric version: `{args.voc_metric_version}`"
+            if args.voc_json and args.voc_protocol == "v2"
+            else "- VOC metric version: `batch_mean_v1` (historical only)"
+            if args.voc_json
+            else "- VOC metric version: not applicable"
+        ),
+        (
+            f"- VOC probe seed: `{args.voc_probe_seed}`"
+            if args.voc_json and args.voc_protocol == "v2"
+            else "- VOC probe seed: unrecorded"
+            if args.voc_json
+            else "- VOC probe seed: not applicable"
+        ),
+        (
+            f"- VOC checkpoint key: `{args.voc_checkpoint_key}`"
+            if args.voc_json and args.voc_protocol == "v2"
+            else "- VOC checkpoint key: unrecorded"
+            if args.voc_json
+            else "- VOC checkpoint key: not applicable"
+        ),
+        *voc_provenance_lines(voc_rows, protocol=args.voc_protocol),
         f"- Number of patch diagnostic checkpoints: {len(rows)}",
         "",
-        *voc_section(voc_rows),
+        *voc_section(voc_rows, protocol=args.voc_protocol),
         "",
         *diagnostics_section(rows),
         "",

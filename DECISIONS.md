@@ -23,9 +23,10 @@ Rationale:
 Accepted wording:
 
 ```text
-In the current ImageNet-100 + DINO ViT-S/16 proxy setting, we have not yet
-observed a clear PASCAL VOC downstream dense degradation drop. This does not
-rule out SDD; it motivates structural diagnostics and longer training.
+The historical ImageNet-100 + DINO ViT-S/16 batch-mean-v1 VOC curve contains
+an apparent downstream drop, but no metric-v2 degradation window is confirmed
+yet. This motivates fixed-seed v2 reruns, structural diagnostics, and only then
+a late-stage intervention.
 ```
 
 Avoid this wording:
@@ -97,17 +98,49 @@ Rationale:
 - It is fast enough to run across many checkpoints.
 - It provides a stable baseline for comparing structural diagnostics.
 
+### Decision: Formal dense metrics use global-confusion v2
+
+Formal VOC and COCO results use:
+
+```text
+metric_version = global_confusion_v2
+voc_miou_results_global_confusion_v2.json
+coco_stuff_miou_results_global_confusion_v2.json
+```
+
+The evaluator accumulates one confusion matrix over the complete validation
+set before computing per-class IoU and mIoU. Every formal row records
+`metric_version`, `probe_seed`, `checkpoint_key`, `representation`, checkpoint
+path and SHA256, probe configuration, dataset identity, and Git commit/dirty
+state. Formal readers require `source_dirty=false`.
+
+Historical `voc_miou_results.json` rows use batch-mean-v1. They remain
+readable only through an explicit legacy mode and are not eligible for v2
+plots, comparison tables, COCO/VOC joins, or the phenomenon gate. Formal
+readers fail closed unless protocol and provenance fields are complete and
+homogeneous.
+
+Rationale:
+
+- Averaging per-batch mIoU weights class presence by batch and is not the
+  standard whole-validation estimator.
+- Explicit provenance prevents a result from being detached from its
+  checkpoint, code, data, or probe recipe.
+- Teacher and student representations are separate evidence and cannot be
+  substituted after viewing results.
+
 ### Decision: VOC probe randomness is explicit and matched across checkpoints
 
 Default:
 
 ```text
 --probe_seed 42
+--checkpoint_key teacher
 ```
 
 `eval_voc_dense.py` resets Python, NumPy, PyTorch, and CUDA RNG state before
-every checkpoint's linear-head initialization. It also records `probe_seed` in
-each output row.
+every checkpoint's linear-head initialization. It records `probe_seed` and the
+explicit checkpoint representation in each output row.
 
 Rationale:
 
@@ -119,6 +152,25 @@ Rationale:
   independent backbone-training seeds.
 - Exact bitwise CUDA reproducibility is not promised for kernels that are
   nondeterministic on the selected runtime.
+
+### Decision: Audit the training horizon independently of downstream metrics
+
+`audit_training_schedule.py` consumes original checkpoints and independent
+session logs and returns `stitched`, `continuous`, or `unknown`. Periodic
+filename/log epochs are zero-based; checkpoint `epoch` counts completed epochs.
+Teacher momentum is reconstructed because it is not logged.
+
+Only sufficient `continuous` evidence reaches the clean-horizon phenomenon
+gate. `stitched` remains exploratory, while `unknown` blocks a verdict.
+
+Rationale:
+
+- `main_dino.py` rebuilds schedules from launch arguments, so a resumed run can
+  change schedule identity even when weights load successfully.
+- Missing logs or horizon checkpoints are missing evidence, not evidence of
+  continuity.
+- The schedule audit and metric-v2 rerun are independent; neither is skipped
+  because of the other's outcome.
 
 ### Decision: Establish the late-stage phenomenon before migrating mitigation
 
@@ -212,6 +264,7 @@ Default:
 
 ```text
 CHECKPOINT_KEY = 'teacher'
+--checkpoint_key teacher
 ```
 
 Rationale:
@@ -220,6 +273,8 @@ Rationale:
   representation.
 - The evaluation should use the same network key across VOC and patch
   diagnostics.
+- Formal evaluation never falls back to another checkpoint key when the
+  requested representation is missing.
 
 ### Decision: Use fixed image/query/PCA basis for qualitative comparisons
 
@@ -330,8 +385,9 @@ Run locally:
 
 ```bash
 pytest -q
-python -m py_compile dense_eval_utils.py dense_patch_diagnostics.py analyze_patch_statistics.py plot_dense_diagnostics.py make_summary_report.py dense_results_io.py
+python -m py_compile audit_training_schedule.py dense_eval_utils.py dense_patch_diagnostics.py analyze_patch_statistics.py plot_dense_diagnostics.py make_summary_report.py dense_results_io.py eval_voc_dense.py eval_coco_stuff_dense.py
 python -m json.tool notebooks/colab_dense_degradation_all_checkpoints.ipynb >/dev/null
+python -m json.tool notebooks/kaggle_raw_l2_dense_eval.ipynb >/dev/null
 git diff --check
 ```
 

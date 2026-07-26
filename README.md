@@ -116,13 +116,28 @@ where `XXXX` is the largest checkpoint epoch found in the Drive folder.
 
 VOC probe randomness is explicit. `eval_voc_dense.py` accepts
 `--probe_seed`, resets that seed before every checkpoint head fit, and records
-it in `voc_miou_results.json`. The notebooks expose the same setting as
-`VOC_PROBE_SEED`; use separate output suffixes when measuring multiple seeds.
+it in `voc_miou_results_global_confusion_v2.json`. Formal runs also pass
+`--checkpoint_key teacher` explicitly and record the selected representation.
+Metric v2 accumulates intersections and unions over the full validation set
+before averaging per-class IoU. Each formal row also records the checkpoint
+SHA256, probe configuration, dataset identity, and Git commit/dirty state.
+Formal readers require `source_dirty=false`.
+The notebooks expose these settings as `VOC_PROBE_SEED` and
+`VOC_CHECKPOINT_KEY`; use separate output directories when measuring multiple
+seeds.
+
+The historical `voc_miou_results.json` rows use the batch-mean-v1 estimator.
+They remain historical evidence only and must not be mixed with
+`global_confusion_v2` rows in plots, tables, COCO comparisons, or phenomenon
+gates. Formal readers validate metric version, probe seed, checkpoint key,
+representation, and provenance before combining results.
 
 The notebook is a thin Colab wrapper around these repository scripts:
 
 - `eval_coco_stuff_dense.py`: runs selected-checkpoint COCO-Stuff
-  frozen-backbone linear probing and writes COCO/VOC/DSE comparison outputs.
+  frozen-backbone linear probing, writes
+  `coco_stuff_miou_results_global_confusion_v2.json`, and only compares it
+  with VOC rows that have the same v2 metric, probe seed, and checkpoint key.
 - `analyze_patch_statistics.py`: scans checkpoints and computes paper-formula
   DSE class separability, effective rank, covariance spectrum, CLS-patch
   cosine, patch norm histograms, CLS attention statistics, fixed-query patch
@@ -131,6 +146,9 @@ The notebook is a thin Colab wrapper around these repository scripts:
 - `plot_dense_diagnostics.py`: merges patch diagnostics with VOC mIoU and
   writes the summary figure.
 - `make_summary_report.py`: writes a compact Markdown report for the run.
+- `audit_training_schedule.py`: audits checkpoint coordinates, schedule
+  identities, independent session logs, and reconstructed LR/WD/teacher
+  momentum before a trajectory is treated as one training horizon.
 
 Expected output folders:
 
@@ -138,6 +156,7 @@ Expected output folders:
 MyDrive/dino_dense_degradation_eval/to_epoch_XXXX/
 ├── selected_checkpoints.json
 ├── voc_all_checkpoints/
+│   └── voc_miou_results_global_confusion_v2.json
 ├── patch_attention_dse_all_checkpoints/
 │   ├── query_points.json
 │   ├── fixed_images.json

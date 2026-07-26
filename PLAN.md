@@ -17,9 +17,10 @@ The project is currently positioned as a diagnostic suite, not as a claim that t
 The working claim is:
 
 > The existing ImageNet-100 + DINO ViT-S/16 VOC sweep contains an apparent
-> peak-to-final decline, but the historical head fits did not record or reset a
-> probe seed. Until repeated fixed-checkpoint probes bound that noise, the
-> curve is a phenomenon signal rather than confirmed SDD evidence.
+> peak-to-final decline, but those historical rows use the batch-mean-v1 mIoU
+> estimator and did not record or reset a probe seed. Until
+> `global_confusion_v2` fixed-checkpoint probes bound that noise, the curve is
+> a phenomenon signal rather than confirmed SDD evidence.
 
 Current correction:
 
@@ -29,15 +30,23 @@ Current correction:
 
 Complete these steps before implementing a late-stage mitigation:
 
-1. Use explicit probe seeds `42`, `1337`, and `2027`. The evaluator resets the
+1. Retrieve and hash the required checkpoints and every independent training
+   session `log.txt`, then run `audit_training_schedule.py`. Only
+   `continuous` reaches the clean-horizon scientific gate; `stitched` remains
+   exploratory and `unknown` blocks a verdict.
+2. Use explicit probe seeds `42`, `1337`, and `2027`. The evaluator resets the
    selected seed before each checkpoint so head initialization and minibatch
-   order are matched across the curve.
-2. Rerun VOC at fixed epochs `180`, `250`, and `318`; report every seed, mean,
-   sample standard deviation, and paired checkpoint changes.
-3. Estimate a predeclared post-peak trend instead of selecting the maximum
+   order are matched across the curve. Use `--checkpoint_key teacher`
+   explicitly for both VOC and COCO.
+3. Rerun VOC at fixed epochs `180`, `250`, and `318`; report every seed, mean,
+   sample standard deviation, and paired checkpoint changes from
+   `voc_miou_results_global_confusion_v2.json`.
+   Accept only rows that record checkpoint SHA256, probe configuration,
+   dataset identity, and a Git commit with `source_dirty=false`.
+4. Estimate a predeclared post-peak trend instead of selecting the maximum
    after viewing the curve.
-4. Run the existing COCO-Stuff evaluator on the same selected checkpoints.
-5. Freeze the intervention fork, primary contrast, equivalence margin, stop
+5. Run the existing COCO-Stuff evaluator on the same selected checkpoints.
+6. Freeze the intervention fork, primary contrast, equivalence margin, stop
    rule, and kill criterion from those measurements.
 
 If the gate passes, the first late-stage experiment uses one fork and only two
@@ -100,11 +109,18 @@ RUN_VOC_EVAL = False
 OUTPUT_RUN_SUFFIX = 'raw_l2'
 ```
 
-This run skips VOC by default and reuses the existing base-run VOC JSON:
+This run skips VOC by default and may reuse only a base-run VOC JSON whose v2
+metric, probe seed, and checkpoint key match the requested report:
 
 ```text
-to_epoch_XXXX/voc_all_checkpoints/voc_miou_results.json
+to_epoch_XXXX/voc_all_checkpoints/voc_miou_results_global_confusion_v2.json
 ```
+
+The historical `voc_miou_results.json` file is batch-mean-v1 evidence. It is
+never auto-discovered or mixed into a v2 plot, summary, COCO comparison, or
+phenomenon gate. Formal plotting/report commands pass
+`--voc_protocol v2 --voc_metric_version global_confusion_v2`,
+`--voc_probe_seed`, and `--voc_checkpoint_key` explicitly.
 
 The new structural validation output is:
 
@@ -137,7 +153,8 @@ summary_report.md
 
 Interpret the run in this order:
 
-1. VOC mIoU best vs final checkpoint.
+1. Paired VOC v2 mIoU changes across the predeclared checkpoints, grouped by
+   probe seed and fixed to the teacher representation.
 2. Raw DSE vs L2 DSE.
 3. Raw class separability vs L2 class separability.
 4. Raw effective rank/top eigenvalue ratio vs L2 effective rank/top eigenvalue ratio.
@@ -193,20 +210,20 @@ epoch -> effective rank
 
 ### Phase 4: COCO-Stuff Selected Checkpoints
 
-Run COCO-Stuff only after VOC and structural diagnostics are available.
+Run COCO-Stuff only after matching `global_confusion_v2` VOC and structural
+diagnostics are available. Use the same explicit probe seed and checkpoint key
+for both datasets; comparison must fail closed on any mismatch.
 
-Selected checkpoints:
+Formal consistency checkpoints:
 
 ```text
-early checkpoint
-VOC best checkpoint
-mid checkpoint
-latest checkpoint
-one checkpoint after epoch 215
-one checkpoint near the newest completed training horizon
+180
+318
 ```
 
-Do not run COCO-Stuff over every checkpoint until selected checkpoints show a useful signal.
+Use paired seeds `{42, 1337, 2027}`. A wider selected-checkpoint curve may be
+run later as exploratory context, but it cannot replace the registered
+180-versus-318 comparison.
 
 ### Phase 5: Longer Training
 
@@ -228,7 +245,13 @@ main_dino.py
     DINO pretraining entry point.
 
 eval_voc_dense.py
-    Frozen-backbone PASCAL VOC linear segmentation sweep.
+    Provenance-bound metric-v2 PASCAL VOC linear segmentation sweep.
+
+eval_coco_stuff_dense.py
+    Provenance-bound selected-checkpoint COCO-Stuff metric-v2 sweep.
+
+audit_training_schedule.py
+    Read-only schedule identity, session-boundary, and log-coverage audit.
 
 dense_eval_utils.py
     Checkpoint discovery, internal epoch reading, and to_epoch_XXXX output naming.
@@ -240,10 +263,11 @@ analyze_patch_statistics.py
     Colab/offline checkpoint sweep for DSE, patch stats, attention stats, PCA maps, and query maps.
 
 plot_dense_diagnostics.py
-    Merge patch diagnostics with VOC mIoU and generate summary figures.
+    Merge patch diagnostics with explicitly validated VOC v2 rows and generate
+    summary figures; historical input requires an explicit legacy mode.
 
 make_summary_report.py
-    Generate Markdown reports for each evaluation run.
+    Generate Markdown reports with explicit VOC protocol identity.
 
 notebooks/colab_dense_degradation_all_checkpoints.ipynb
     Colab orchestration wrapper for Drive checkpoints and evaluation outputs.
@@ -270,7 +294,8 @@ Run before claiming repository changes are ready:
 
 ```bash
 pytest -q
-python -m py_compile dense_eval_utils.py dense_patch_diagnostics.py analyze_patch_statistics.py plot_dense_diagnostics.py make_summary_report.py dense_results_io.py
+python -m py_compile audit_training_schedule.py dense_eval_utils.py dense_patch_diagnostics.py analyze_patch_statistics.py plot_dense_diagnostics.py make_summary_report.py dense_results_io.py eval_voc_dense.py eval_coco_stuff_dense.py
 python -m json.tool notebooks/colab_dense_degradation_all_checkpoints.ipynb >/dev/null
+python -m json.tool notebooks/kaggle_raw_l2_dense_eval.ipynb >/dev/null
 git diff --check
 ```

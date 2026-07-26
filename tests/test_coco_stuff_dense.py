@@ -16,6 +16,7 @@ from eval_coco_stuff_dense import (
     filter_checkpoints_by_epoch,
     parse_epoch_filter,
     write_comparison_csv,
+    write_summary,
 )
 
 
@@ -211,12 +212,36 @@ def test_filter_checkpoints_by_epoch_requires_all_requested_epochs():
         filter_checkpoints_by_epoch(checkpoints, [80, 180])
 
 
-def test_write_comparison_csv_merges_coco_voc_and_dense_metrics(tmp_path):
-    voc_path = tmp_path / "voc_miou_results.json"
+def _v2_result(
+    epoch: int,
+    miou: float,
+    *,
+    seed: int = 42,
+    checkpoint_key: str = "teacher",
+) -> dict:
+    return {
+        "epoch": epoch,
+        "miou": miou,
+        "metric_version": "global_confusion_v2",
+        "probe_seed": seed,
+        "checkpoint_key": checkpoint_key,
+        "representation": "ema_teacher" if checkpoint_key == "teacher" else "student",
+        "checkpoint": f"/checkpoints/checkpoint{epoch:04d}.pth",
+        "checkpoint_sha256": f"{epoch:064x}",
+        "probe_config": {"train_epochs": 15},
+        "dataset_identity": {"name": "fixture"},
+        "source_commit": "a" * 40,
+        "source_dirty": False,
+        "per_class_iou": [miou],
+    }
+
+
+def test_write_comparison_csv_merges_protocol_matched_v2_results(tmp_path):
+    voc_path = tmp_path / "voc_miou_results_global_confusion_v2.json"
     dense_path = tmp_path / "combined_dense_summary.csv"
     output_path = tmp_path / "comparison.csv"
 
-    voc_path.write_text(json.dumps([{"epoch": 180, "miou": 30.8}]))
+    voc_path.write_text(json.dumps([_v2_result(180, 30.8)]))
     with dense_path.open("w", newline="") as handle:
         writer = csv.DictWriter(
             handle,
@@ -246,7 +271,7 @@ def test_write_comparison_csv_merges_coco_voc_and_dense_metrics(tmp_path):
         )
 
     write_comparison_csv(
-        coco_results=[{"epoch": 180, "miou": 29.5}],
+        coco_results=[_v2_result(180, 29.5)],
         voc_json_path=voc_path,
         dense_summary_csv_path=dense_path,
         output_path=output_path,
@@ -257,6 +282,10 @@ def test_write_comparison_csv_merges_coco_voc_and_dense_metrics(tmp_path):
     assert rows == [
         {
             "epoch": "180",
+            "metric_version": "global_confusion_v2",
+            "probe_seed": "42",
+            "checkpoint_key": "teacher",
+            "representation": "ema_teacher",
             "coco_stuff_miou": "29.5",
             "voc_miou": "30.8",
             "raw_dse": "140.0",
@@ -268,3 +297,55 @@ def test_write_comparison_csv_merges_coco_voc_and_dense_metrics(tmp_path):
             "patch_norm_mean": "42.0",
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("voc_overrides", "match"),
+    [
+        ({"metric_version": "batch_mean_v1"}, "metric_version"),
+        ({"probe_seed": 1337}, "probe_seed"),
+        ({"checkpoint_key": "student", "representation": "student"}, "checkpoint_key"),
+        ({"checkpoint_sha256": "f" * 64}, "checkpoint_sha256"),
+    ],
+)
+def test_write_comparison_csv_rejects_mismatched_voc_protocol(
+    tmp_path,
+    voc_overrides,
+    match,
+):
+    voc_row = _v2_result(180, 30.8)
+    voc_row.update(voc_overrides)
+    voc_path = tmp_path / "voc.json"
+    voc_path.write_text(json.dumps([voc_row]))
+
+    with pytest.raises(ValueError, match=match):
+        write_comparison_csv(
+            coco_results=[_v2_result(180, 29.5)],
+            voc_json_path=voc_path,
+            dense_summary_csv_path=None,
+            output_path=tmp_path / "comparison.csv",
+        )
+
+
+def test_write_comparison_csv_rejects_unversioned_coco_results(tmp_path):
+    voc_path = tmp_path / "voc.json"
+    voc_path.write_text(json.dumps([_v2_result(180, 30.8)]))
+
+    with pytest.raises(ValueError, match="missing required fields"):
+        write_comparison_csv(
+            coco_results=[{"epoch": 180, "miou": 29.5}],
+            voc_json_path=voc_path,
+            dense_summary_csv_path=None,
+            output_path=tmp_path / "comparison.csv",
+        )
+
+
+def test_write_summary_records_v2_protocol(tmp_path):
+    output_path = tmp_path / "summary.md"
+    write_summary([_v2_result(180, 29.5)], output_path)
+
+    summary = output_path.read_text()
+    assert "global_confusion_v2" in summary
+    assert "Probe seed: `42`" in summary
+    assert "Checkpoint key: `teacher`" in summary
+    assert "Representation: `ema_teacher`" in summary

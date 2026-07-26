@@ -1,11 +1,18 @@
 from pathlib import Path
 import sys
+import json
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from dense_results_io import read_csv_rows
-from plot_dense_diagnostics import plot_raw_l2_figures, write_combined_summary
+from plot_dense_diagnostics import (
+    plot_raw_l2_figures,
+    read_protocol_voc_results,
+    write_combined_summary,
+)
 
 
 def test_plot_raw_l2_figures_writes_required_outputs(tmp_path):
@@ -54,9 +61,108 @@ def test_combined_summary_preserves_raw_l2_columns(tmp_path):
     ]
     path = tmp_path / "combined.csv"
 
-    write_combined_summary(path, rows, {1: 33.0})
+    write_combined_summary(
+        path,
+        rows,
+        {1: 33.0},
+        voc_metric_version="global_confusion_v2",
+        voc_probe_seed=42,
+        voc_checkpoint_key="teacher",
+    )
 
     reloaded = read_csv_rows(path)
     assert reloaded[0]["voc_miou"] == 33.0
+    assert reloaded[0]["voc_metric_version"] == "global_confusion_v2"
+    assert reloaded[0]["voc_probe_seed"] == 42
+    assert reloaded[0]["voc_checkpoint_key"] == "teacher"
     assert reloaded[0]["raw_dse"] == 10.0
     assert reloaded[0]["l2_dse"] == 8.0
+
+
+def test_v2_reader_requires_and_validates_protocol(tmp_path):
+    path = tmp_path / "voc_v2.json"
+    path.write_text(json.dumps([
+        {
+            "epoch": 180,
+            "miou": 30.8,
+            "metric_version": "global_confusion_v2",
+            "probe_seed": 42,
+            "checkpoint_key": "teacher",
+            "representation": "ema_teacher",
+            "checkpoint": "/checkpoints/checkpoint0180.pth",
+            "checkpoint_sha256": "1" * 64,
+            "probe_config": {"train_epochs": 15},
+            "dataset_identity": {"name": "fixture"},
+            "source_commit": "a" * 40,
+            "source_dirty": False,
+        }
+    ]))
+
+    with pytest.raises(ValueError, match="requires"):
+        read_protocol_voc_results(
+            path,
+            protocol="v2",
+            metric_version=None,
+            probe_seed=None,
+            checkpoint_key=None,
+        )
+
+    values, metadata = read_protocol_voc_results(
+        path,
+        protocol="v2",
+        metric_version="global_confusion_v2",
+        probe_seed=42,
+        checkpoint_key="teacher",
+    )
+    assert values == {180: 30.8}
+    assert metadata == {
+        "metric_version": "global_confusion_v2",
+        "probe_seed": 42,
+        "checkpoint_key": "teacher",
+    }
+
+
+def test_legacy_reader_requires_explicit_legacy_mode(tmp_path):
+    path = tmp_path / "voc_legacy.json"
+    path.write_text(json.dumps([{"epoch": 180, "miou": 30.8}]))
+
+    with pytest.raises(ValueError, match="metric_version"):
+        read_protocol_voc_results(
+            path,
+            protocol="v2",
+            metric_version="global_confusion_v2",
+            probe_seed=42,
+            checkpoint_key="teacher",
+        )
+
+    values, metadata = read_protocol_voc_results(
+        path,
+        protocol="legacy",
+        metric_version=None,
+        probe_seed=None,
+        checkpoint_key=None,
+    )
+    assert values == {180: 30.8}
+    assert metadata["metric_version"] == "batch_mean_v1"
+
+
+def test_legacy_reader_rejects_v2_rows(tmp_path):
+    path = tmp_path / "voc_v2.json"
+    path.write_text(json.dumps([
+        {
+            "epoch": 180,
+            "miou": 30.8,
+            "metric_version": "global_confusion_v2",
+            "probe_seed": 42,
+            "checkpoint_key": "teacher",
+        }
+    ]))
+
+    with pytest.raises(ValueError, match="accepts only"):
+        read_protocol_voc_results(
+            path,
+            protocol="legacy",
+            metric_version=None,
+            probe_seed=None,
+            checkpoint_key=None,
+        )

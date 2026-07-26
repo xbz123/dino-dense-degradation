@@ -69,8 +69,9 @@ Run these before claiming local code/docs changes are ready:
 
 ```bash
 pytest -q
-python -m py_compile dense_eval_utils.py dense_patch_diagnostics.py analyze_patch_statistics.py plot_dense_diagnostics.py make_summary_report.py dense_results_io.py
+python -m py_compile audit_training_schedule.py dense_eval_utils.py dense_patch_diagnostics.py analyze_patch_statistics.py plot_dense_diagnostics.py make_summary_report.py dense_results_io.py eval_voc_dense.py eval_coco_stuff_dense.py
 python -m json.tool notebooks/colab_dense_degradation_all_checkpoints.ipynb >/dev/null
+python -m json.tool notebooks/kaggle_raw_l2_dense_eval.ipynb >/dev/null
 git diff --check
 ```
 
@@ -78,6 +79,7 @@ If only Markdown files changed, this lighter check is acceptable:
 
 ```bash
 python -m json.tool notebooks/colab_dense_degradation_all_checkpoints.ipynb >/dev/null
+python -m json.tool notebooks/kaggle_raw_l2_dense_eval.ipynb >/dev/null
 git diff --check
 git status --short
 ```
@@ -156,12 +158,27 @@ RUN_VOC_EVAL = False
 OUTPUT_RUN_SUFFIX = 'raw_l2'
 ```
 
-Use the existing base-run VOC JSON unless new checkpoints require a new VOC
-sweep:
+Reuse a base-run VOC JSON only when its v2 metric, probe seed, and checkpoint
+key match the requested report:
 
 ```text
-to_epoch_XXXX/voc_all_checkpoints/voc_miou_results.json
+to_epoch_XXXX/voc_all_checkpoints/voc_miou_results_global_confusion_v2.json
 ```
+
+Formal VOC/COCO runs must pass `--probe_seed` and `--checkpoint_key`
+explicitly. Readers must validate
+`metric_version=global_confusion_v2`, the expected probe seed, and the expected
+checkpoint key before combining rows. Formal rows must also carry checkpoint
+SHA256, probe configuration, dataset identity, representation, and Git
+commit with `source_dirty=false`. Historical `voc_miou_results.json`
+batch-mean-v1 rows may
+be read only through an explicit legacy mode and must not enter a v2 plot,
+table, comparison, or decision gate.
+
+Run `audit_training_schedule.py` on original checkpoints and independent
+session logs before treating a long curve as one horizon. `stitched` is
+exploratory, `unknown` blocks a clean-horizon verdict, and only sufficiently
+supported `continuous` evidence reaches the scientific gate.
 
 ## Interpretation Rules
 
@@ -170,7 +187,8 @@ Use conservative language.
 Allowed:
 
 ```text
-VOC mIoU does not show a clear downstream degradation drop in this proxy setup.
+Historical VOC batch-mean-v1 mIoU suggests a possible downstream drop that
+requires metric-v2 confirmation.
 Raw structural diagnostics show a warning signal before a visible VOC drop.
 L2-normalized diagnostics are needed to confirm angular patch-geometry degradation.
 The current setup is not equivalent to the full SDD reference setting.
@@ -193,7 +211,8 @@ When interpreting outputs, inspect in this order:
 4. `figures/fig_raw_vs_l2_dse.png`
 5. `figures/fig_raw_vs_l2_class_sep.png`
 6. `figures/fig_raw_vs_l2_spectrum.png`
-7. `voc_all_checkpoints/voc_miou_results.json` or the reused base-run VOC JSON
+7. `voc_all_checkpoints/voc_miou_results_global_confusion_v2.json` or a reused
+   base-run v2 JSON with the same seed and checkpoint key
 8. `patch_attention_dse_all_checkpoints/patch_attention_dse_summary.csv`
 9. Fixed-image qualitative figures under `patch_attention_dse_all_checkpoints/epoch_XXXX/`
 

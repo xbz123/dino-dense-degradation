@@ -2,6 +2,8 @@ from pathlib import Path
 import sys
 import json
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
@@ -31,3 +33,72 @@ def test_read_voc_results_can_return_mapping_or_rows(tmp_path):
 
     assert read_voc_results(path) == {20: 30.0, 30: 31.0}
     assert [row["epoch"] for row in read_voc_results(path, as_rows=True)] == [20, 30]
+
+
+def test_read_voc_results_enforces_requested_v2_protocol(tmp_path):
+    path = tmp_path / "voc_v2.json"
+    path.write_text(json.dumps([
+        {
+            "epoch": 180,
+            "miou": 30.8,
+            "metric_version": "global_confusion_v2",
+            "probe_seed": 42,
+            "checkpoint_key": "teacher",
+            "representation": "ema_teacher",
+            "checkpoint": "/checkpoints/checkpoint0180.pth",
+            "checkpoint_sha256": "1" * 64,
+            "probe_config": {"train_epochs": 15},
+            "dataset_identity": {"name": "fixture"},
+            "source_commit": "a" * 40,
+            "source_dirty": False,
+        }
+    ]))
+
+    rows = read_voc_results(
+        path,
+        as_rows=True,
+        expected_metric_version="global_confusion_v2",
+        expected_probe_seed=42,
+        expected_checkpoint_key="teacher",
+        require_provenance=True,
+    )
+    assert rows[0]["epoch"] == 180
+
+    with pytest.raises(ValueError, match="probe_seed"):
+        read_voc_results(path, expected_probe_seed=1337)
+    with pytest.raises(ValueError, match="checkpoint_key"):
+        read_voc_results(path, expected_checkpoint_key="student")
+
+    dirty_rows = json.loads(path.read_text())
+    dirty_rows[0]["source_dirty"] = True
+    path.write_text(json.dumps(dirty_rows))
+    with pytest.raises(ValueError, match="dirty source tree"):
+        read_voc_results(path, require_provenance=True)
+
+
+def test_read_voc_results_fails_closed_on_missing_v2_provenance(tmp_path):
+    path = tmp_path / "voc_v2.json"
+    path.write_text(json.dumps([
+        {
+            "epoch": 180,
+            "miou": 30.8,
+            "metric_version": "global_confusion_v2",
+            "probe_seed": 42,
+            "checkpoint_key": "teacher",
+        }
+    ]))
+
+    with pytest.raises(ValueError, match="provenance fields"):
+        read_voc_results(path, require_provenance=True)
+
+
+def test_read_voc_results_fails_closed_on_missing_v2_metadata(tmp_path):
+    path = tmp_path / "legacy_voc.json"
+    path.write_text(json.dumps([{"epoch": 180, "miou": 30.8}]))
+
+    assert read_voc_results(path) == {180: 30.8}
+    with pytest.raises(ValueError, match="metric_version"):
+        read_voc_results(
+            path,
+            expected_metric_version="global_confusion_v2",
+        )

@@ -38,12 +38,19 @@ except ImportError:  # pragma: no cover - exercised only in scipy-free environme
     loadmat = None
 
 from eval_voc_dense import (
+    GLOBAL_CONFUSION_METRIC_VERSION,
     compute_miou,
     discover_checkpoints,
     extract_features,
+    file_sha256,
+    get_source_state,
     load_dino_backbone,
     train_linear_head,
 )
+from dense_results_io import V2_PROVENANCE_FIELDS, read_voc_results
+
+
+COCO_V2_RESULTS_FILENAME = "coco_stuff_miou_results_global_confusion_v2.json"
 
 
 class COCOStuffSegDataset(torch.utils.data.Dataset):
@@ -296,14 +303,104 @@ def filter_checkpoints_by_epoch(
     return [(epoch, by_epoch[epoch]) for epoch in epochs]
 
 
-def _load_voc_results(path: str | Path | None) -> dict[int, str]:
-    if path is None:
-        return {}
-    path = Path(path)
-    if not path.is_file():
-        return {}
-    with path.open() as handle:
-        return {int(row["epoch"]): str(row["miou"]) for row in json.load(handle)}
+def _validate_v2_results(
+    rows: list[dict],
+    *,
+    label: str,
+) -> tuple[str, int, str, str]:
+    """Validate one homogeneous metric-v2 result collection."""
+    if not rows:
+        raise ValueError(f"{label} results are empty")
+
+    required = {
+        "metric_version",
+        "probe_seed",
+        "checkpoint_key",
+        "per_class_iou",
+    } | V2_PROVENANCE_FIELDS
+    for row in rows:
+        missing = sorted(required.difference(row))
+        if missing:
+            raise ValueError(
+                f"{label} result for epoch {row.get('epoch')} is missing "
+                f"required fields: {missing}"
+            )
+        if not re.fullmatch(r"[0-9a-f]{64}", str(row["checkpoint_sha256"])):
+            raise ValueError(
+                f"{label} result for epoch {row.get('epoch')} has invalid "
+                "checkpoint_sha256"
+            )
+        if not re.fullmatch(r"[0-9a-f]{40,64}", str(row["source_commit"])):
+            raise ValueError(
+                f"{label} result for epoch {row.get('epoch')} has invalid "
+                "source_commit"
+            )
+        if not isinstance(row["source_dirty"], bool):
+            raise ValueError(
+                f"{label} result for epoch {row.get('epoch')} has invalid "
+                "source_dirty"
+            )
+        if row["source_dirty"]:
+            raise ValueError(
+                f"{label} result for epoch {row.get('epoch')} was produced "
+                "from a dirty source tree"
+            )
+        if not isinstance(row["probe_config"], dict):
+            raise ValueError(
+                f"{label} result for epoch {row.get('epoch')} has invalid "
+                "probe_config"
+            )
+        if not isinstance(row["dataset_identity"], dict):
+            raise ValueError(
+                f"{label} result for epoch {row.get('epoch')} has invalid "
+                "dataset_identity"
+            )
+
+    versions = {row["metric_version"] for row in rows}
+    seeds = {row["probe_seed"] for row in rows}
+    checkpoint_keys = {row["checkpoint_key"] for row in rows}
+    representations = {row["representation"] for row in rows}
+    if versions != {GLOBAL_CONFUSION_METRIC_VERSION}:
+        raise ValueError(
+            f"{label} results must use {GLOBAL_CONFUSION_METRIC_VERSION}; "
+            f"found {sorted(versions)}"
+        )
+    for field, values in (
+        ("probe_seed", seeds),
+        ("checkpoint_key", checkpoint_keys),
+        ("representation", representations),
+    ):
+        if len(values) != 1:
+            raise ValueError(f"{label} results mix {field} values: {sorted(values)}")
+    epochs = [int(row["epoch"]) for row in rows]
+    if len(epochs) != len(set(epochs)):
+        raise ValueError(f"{label} results contain duplicate checkpoint epochs")
+    for field in (
+        "source_commit",
+        "source_dirty",
+        "probe_config",
+        "dataset_identity",
+    ):
+        values = {json.dumps(row[field], sort_keys=True) for row in rows}
+        if len(values) != 1:
+            raise ValueError(f"{label} results mix {field} values")
+
+    checkpoint_key = next(iter(checkpoint_keys))
+    representation = next(iter(representations))
+    if checkpoint_key not in {"teacher", "student"}:
+        raise ValueError(f"{label} results use unsupported checkpoint_key {checkpoint_key!r}")
+    expected_representation = "ema_teacher" if checkpoint_key == "teacher" else "student"
+    if representation != expected_representation:
+        raise ValueError(
+            f"{label} representation {representation!r} does not match "
+            f"checkpoint_key {checkpoint_key!r}"
+        )
+    return (
+        GLOBAL_CONFUSION_METRIC_VERSION,
+        int(next(iter(seeds))),
+        str(checkpoint_key),
+        str(representation),
+    )
 
 
 def _load_dense_summary(path: str | Path | None) -> dict[int, dict[str, str]]:
@@ -317,19 +414,66 @@ def _load_dense_summary(path: str | Path | None) -> dict[int, dict[str, str]]:
 
 
 def write_comparison_csv(
-    coco_results: list[dict[str, float]],
+    coco_results: list[dict],
     voc_json_path: str | Path | None,
     dense_summary_csv_path: str | Path | None,
     output_path: str | Path,
 ) -> None:
-    """Merge COCO-Stuff mIoU with VOC and dense diagnostic summaries."""
-    voc_by_epoch = _load_voc_results(voc_json_path)
+    """Merge only protocol-matched v2 COCO, VOC, and dense summaries."""
+    metric_version, probe_seed, checkpoint_key, representation = _validate_v2_results(
+        coco_results,
+        label="COCO-Stuff",
+    )
+    voc_rows = read_voc_results(
+        voc_json_path,
+        as_rows=True,
+        expected_metric_version=metric_version,
+        expected_probe_seed=probe_seed,
+        expected_checkpoint_key=checkpoint_key,
+        require_provenance=True,
+    )
+    coco_by_epoch = {int(row["epoch"]): row for row in coco_results}
+    for row in voc_rows:
+        if row.get("representation") != representation:
+            raise ValueError(
+                f"VOC result for epoch {row.get('epoch')} has representation="
+                f"{row.get('representation')!r}; expected {representation!r}"
+            )
+        missing = {"checkpoint", "per_class_iou"}.difference(row)
+        if missing:
+            raise ValueError(
+                f"VOC result for epoch {row.get('epoch')} is missing required "
+                f"fields: {sorted(missing)}"
+            )
+        coco_row = coco_by_epoch.get(int(row["epoch"]))
+        if coco_row is None:
+            continue
+        for field in ("checkpoint_sha256", "source_commit", "source_dirty"):
+            if row.get(field) != coco_row.get(field):
+                raise ValueError(
+                    f"VOC and COCO result for epoch {row.get('epoch')} have "
+                    f"different {field}"
+                )
+    voc_by_epoch = {int(row["epoch"]): str(row["miou"]) for row in voc_rows}
+    missing_voc_epochs = sorted(
+        int(row["epoch"])
+        for row in coco_results
+        if int(row["epoch"]) not in voc_by_epoch
+    )
+    if missing_voc_epochs:
+        raise ValueError(
+            f"VOC results are missing COCO comparison epochs: {missing_voc_epochs}"
+        )
     dense_by_epoch = _load_dense_summary(dense_summary_csv_path)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     fieldnames = [
         "epoch",
+        "metric_version",
+        "probe_seed",
+        "checkpoint_key",
+        "representation",
         "coco_stuff_miou",
         "voc_miou",
         "raw_dse",
@@ -349,6 +493,10 @@ def write_comparison_csv(
             writer.writerow(
                 {
                     "epoch": epoch,
+                    "metric_version": metric_version,
+                    "probe_seed": probe_seed,
+                    "checkpoint_key": checkpoint_key,
+                    "representation": representation,
                     "coco_stuff_miou": result["miou"],
                     "voc_miou": voc_by_epoch.get(epoch, ""),
                     "raw_dse": dense.get("raw_dse", ""),
@@ -412,7 +560,11 @@ def plot_coco_curve(results: list[dict[str, float]], output_path: str | Path) ->
     plt.close()
 
 
-def write_summary(results: list[dict[str, float]], output_path: str | Path) -> None:
+def write_summary(results: list[dict], output_path: str | Path) -> None:
+    metric_version, probe_seed, checkpoint_key, representation = _validate_v2_results(
+        results,
+        label="COCO-Stuff",
+    )
     best = max(results, key=lambda row: row["miou"])
     last = results[-1]
     diff = float(last["miou"]) - float(best["miou"])
@@ -421,6 +573,10 @@ def write_summary(results: list[dict[str, float]], output_path: str | Path) -> N
     lines = [
         "# COCO-Stuff Selected-Checkpoint Summary",
         "",
+        f"- Metric version: `{metric_version}`",
+        f"- Probe seed: `{probe_seed}`",
+        f"- Checkpoint key: `{checkpoint_key}`",
+        f"- Representation: `{representation}`",
         f"- Evaluated checkpoints: {len(results)}",
         f"- Best checkpoint: epoch {int(best['epoch'])}, mIoU {float(best['miou']):.3f}",
         f"- Final checkpoint: epoch {int(last['epoch'])}, mIoU {float(last['miou']):.3f}",
@@ -491,9 +647,43 @@ def evaluate_checkpoints(args: argparse.Namespace) -> list[dict[str, float]]:
 
     results = []
     embed_dim = 384
+    source_state = get_source_state()
+    dataset_identity = {
+        "name": "COCO-Stuff",
+        "root": str(train_dataset.root.resolve()),
+        "train_split": args.train_split,
+        "val_split": args.val_split,
+        "train_images": len(train_dataset),
+        "val_images": len(val_dataset),
+        "num_classes": args.num_classes,
+        "ignore_index": args.ignore_index,
+    }
+    probe_config = {
+        "arch": args.arch,
+        "patch_size": args.patch_size,
+        "img_size": img_size,
+        "train_epochs": args.train_epochs,
+        "lr": args.lr,
+        "batch_size": args.batch_size,
+        "optimizer": args.optimizer,
+        "loss_resolution": args.loss_resolution,
+        "feature_dtype": args.feature_dtype,
+        "num_workers": args.num_workers,
+        "max_train_images": args.max_train_images,
+        "max_val_images": args.max_val_images,
+        "allow_partial_load": args.allow_partial_load,
+    }
+    print(
+        f"Source commit: {source_state['source_commit']} "
+        f"(dirty={source_state['source_dirty']})"
+    )
     for index, (epoch, ckpt_path) in enumerate(ckpt_files):
         print(f"\n[{index + 1}/{len(ckpt_files)}] Evaluating Epoch {epoch}...")
-        model = load_dino_backbone(ckpt_path, arch=args.arch, patch_size=args.patch_size)
+        checkpoint_digest = file_sha256(ckpt_path)
+        print(f"  Checkpoint SHA256: {checkpoint_digest}")
+        model = load_dino_backbone(ckpt_path, arch=args.arch, patch_size=args.patch_size,
+                                   checkpoint_key=args.checkpoint_key,
+                                   allow_partial=args.allow_partial_load)
         model = model.to(device)
 
         print("  Extracting train features...")
@@ -513,7 +703,7 @@ def evaluate_checkpoints(args: argparse.Namespace) -> list[dict[str, float]]:
             torch.cuda.empty_cache()
 
         print(f"  Training linear head ({args.train_epochs} epochs)...")
-        miou = train_linear_head(
+        probe_stats = train_linear_head(
             features_train,
             targets_train,
             features_val,
@@ -528,17 +718,35 @@ def evaluate_checkpoints(args: argparse.Namespace) -> list[dict[str, float]]:
             batch_size=args.batch_size,
             optimizer_name=args.optimizer,
             loss_resolution=args.loss_resolution,
+            seed=args.probe_seed,
+            return_stats=True,
         )
-        miou_percent = float(miou * 100)
+        miou_percent = float(probe_stats["miou_global"] * 100)
+        miou_batch_mean_percent = float(probe_stats["miou_batch_mean"] * 100)
         if not math.isfinite(miou_percent):
             raise RuntimeError(f"Non-finite mIoU for epoch {epoch}: {miou_percent}")
 
-        print(f"  Epoch {epoch}: COCO-Stuff mIoU = {miou_percent:.2f}%")
+        print(f"  Epoch {epoch}: COCO-Stuff mIoU(global_confusion_v2) = {miou_percent:.2f}%  "
+              f"[legacy batch_mean_v1 = {miou_batch_mean_percent:.2f}%]")
         results.append(
             {
                 "epoch": int(epoch),
                 "miou": miou_percent,
+                "per_class_iou": [
+                    value * 100 if value is not None else None
+                    for value in probe_stats["per_class_iou"]
+                ],
+                "metric_version": GLOBAL_CONFUSION_METRIC_VERSION,
+                "probe_seed": args.probe_seed,
+                "checkpoint_key": args.checkpoint_key,
+                "representation": (
+                    "ema_teacher" if args.checkpoint_key == "teacher" else "student"
+                ),
                 "checkpoint": str(ckpt_path),
+                "checkpoint_sha256": checkpoint_digest,
+                "probe_config": probe_config,
+                "dataset_identity": dataset_identity,
+                **source_state,
                 "train_images": len(train_dataset),
                 "val_images": len(val_dataset),
             }
@@ -572,6 +780,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lr", type=float, default=0.0025)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--optimizer", type=str, default="adam", choices=["adam", "sgd"])
+    parser.add_argument("--probe_seed", type=int, default=42,
+                        help="RNG seed reset before each checkpoint linear probe")
+    parser.add_argument("--checkpoint_key", type=str, default="teacher",
+                        choices=["teacher", "student"],
+                        help="Checkpoint representation to evaluate")
+    parser.add_argument("--allow_partial_load", action="store_true",
+                        help="Accept checkpoints whose backbone keys do not match exactly")
     parser.add_argument(
         "--loss_resolution",
         type=str,
@@ -596,24 +811,27 @@ def main() -> None:
 
     results = evaluate_checkpoints(args)
 
-    results_path = output_dir / "coco_stuff_miou_results.json"
+    results_path = output_dir / COCO_V2_RESULTS_FILENAME
     results_path.write_text(json.dumps(results, indent=2))
     print(f"Results saved to: {results_path}")
 
-    plot_path = output_dir / "dense_degradation_coco_stuff.png"
+    plot_path = output_dir / "dense_degradation_coco_stuff_global_confusion_v2.png"
     plot_coco_curve(results, plot_path)
     print(f"Plot saved to: {plot_path}")
 
-    comparison_path = output_dir / "coco_voc_dse_comparison.csv"
-    write_comparison_csv(
-        results,
-        voc_json_path=args.voc_results_json,
-        dense_summary_csv_path=args.dense_summary_csv,
-        output_path=comparison_path,
-    )
-    print(f"Comparison CSV saved to: {comparison_path}")
+    if args.voc_results_json:
+        comparison_path = output_dir / "coco_voc_dse_comparison_global_confusion_v2.csv"
+        write_comparison_csv(
+            results,
+            voc_json_path=args.voc_results_json,
+            dense_summary_csv_path=args.dense_summary_csv,
+            output_path=comparison_path,
+        )
+        print(f"Comparison CSV saved to: {comparison_path}")
+    else:
+        print("VOC comparison skipped: --voc_results_json was not provided")
 
-    summary_path = output_dir / "coco_stuff_summary.md"
+    summary_path = output_dir / "coco_stuff_summary_global_confusion_v2.md"
     write_summary(results, summary_path)
     print(f"Summary saved to: {summary_path}")
 

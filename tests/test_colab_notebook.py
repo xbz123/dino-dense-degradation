@@ -38,6 +38,12 @@ def test_colab_notebook_exposes_independent_run_toggles():
 
 def test_colab_notebook_can_run_all_eval_stages_without_runtime_patching():
     source = NOTEBOOK.read_text()
+    notebook = json.loads(source)
+    code_source = "\n".join(
+        "".join(cell.get("source", []))
+        for cell in notebook["cells"]
+        if cell.get("cell_type") == "code"
+    )
 
     assert "eval_voc_dense.py" in source
     assert "VOC_OUTPUT_DIR = RUN_OUTPUT_ROOT / 'voc_all_checkpoints'" in source
@@ -45,5 +51,18 @@ def test_colab_notebook_can_run_all_eval_stages_without_runtime_patching():
     assert "'--output_dir', str(VOC_OUTPUT_DIR)" in source
     assert "'--optimizer', VOC_OPTIMIZER" in source
     assert "'--probe_seed', str(VOC_PROBE_SEED)" in source
+    assert "'--checkpoint_key', VOC_CHECKPOINT_KEY" in source
+    assert "VOC_CHECKPOINT_KEY == CHECKPOINT_KEY" in source
+    assert code_source.index("VOC_CHECKPOINT_KEY = 'teacher'") < code_source.index(
+        "assert VOC_CHECKPOINT_KEY == CHECKPOINT_KEY"
+    )
+    assert code_source.index("\nCHECKPOINT_KEY = 'teacher'") < code_source.index(
+        "assert VOC_CHECKPOINT_KEY == CHECKPOINT_KEY"
+    )
+    assert "voc_miou_results_global_confusion_v2.json" in source
+    assert "'--voc_protocol', VOC_PROTOCOL" in source
+    assert "'--voc_metric_version', VOC_METRIC_VERSION" in source
+    assert "'--voc_probe_seed', str(VOC_PROBE_SEED)" in source
+    assert "'--voc_checkpoint_key', VOC_CHECKPOINT_KEY" in source
     assert "txt.replace(old, new)" not in source
     assert "optimizer patch" not in source.lower()
