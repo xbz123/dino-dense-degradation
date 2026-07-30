@@ -89,6 +89,15 @@ but the historical curve is exploratory rather than a clean-horizon
 phenomenon result. Independent session logs are still needed to localize and
 quantify the schedule boundaries.
 
+The registered three-seed EMA-teacher VOC metric-v2 characterization is also
+complete at experiment labels `{180, 250, 318}`. Mean mIoU is `38.6871`,
+`37.6135`, and `37.2876`, respectively. The paired label-318 minus label-180
+change is `-1.39945 +/- 0.01229` points (mean +/- sample SD, `n=3`), with all
+three paired changes negative. All rows passed checkpoint, source, seed,
+metric, representation, probe, and dataset identity checks. Because the
+schedule audit is `stitched`, this is retained as stitched-run exploratory
+characterization and is not a clean-horizon SDD verdict.
+
 The repository also includes a Colab notebook for the current Drive-based
 evaluation workflow:
 
@@ -164,19 +173,19 @@ Known limitations:
   runner for trend analysis, not a full reproduction of every downstream
   setting in the SDD paper.
 - Historical VOC rows use the batch-mean-v1 mIoU estimator and were generated
-  before the evaluator recorded an explicit probe seed. The apparent epoch-180
-  peak versus epoch-318 endpoint is historical evidence only and must be rerun
-  under `global_confusion_v2` with multiple fixed probe seeds before it defines
-  a degradation window or intervention fork.
-- The metric-v2 code and notebook wiring are implemented, but the formal GPU
-  reruns and resulting v2 artifacts are not yet present in this checkout.
+  before the evaluator recorded an explicit probe seed. They remain legacy
+  evidence and are not mixed with the completed metric-v2 characterization.
+- The formal metric-v2 GPU reruns are complete and their raw archives remain
+  outside Git. Their repeatable decline applies to a stitched trajectory, not
+  to one clean training horizon, so it cannot define an intervention fork.
 - The offline schedule audit covers 15 verified checkpoints from labels 170
   through 318 and detects target-horizon changes from 200 to 300 to 500. Its
   verdict is `stitched` with partial evidence because independent session logs
   are not yet archived.
-- COCO-Stuff selected-checkpoint evaluation is now implemented, but full
-  COCO-Stuff results have not yet been run in this checkout. ADE20K and
-  Cityscapes linear segmentation remain future work.
+- COCO-Stuff selected-checkpoint evaluation is implemented but was not run:
+  the registered protocol permits it only after VOC reaches a scientific
+  verdict, which P0 `stitched` blocks. ADE20K and Cityscapes linear
+  segmentation remain future work.
 - Full Colab/Kaggle runs depend on external data, checkpoints, and GPU runtime,
   so local tests validate code paths and configuration wiring rather than
   reproducing a complete GPU sweep.
@@ -189,23 +198,18 @@ Planned research and engineering work:
    and rerun the audit to localize LR/WD boundary behavior. Logs can strengthen
    the boundary evidence but cannot turn the already observed schedule
    identity changes into a clean continuous horizon.
-2. Rerun VOC at epochs `180 / 250 / 318` with probe seeds
-   `42 / 1337 / 2027`; report per-seed rows, mean, sample SD, and paired
-   changes from `global_confusion_v2`, using
-   `--checkpoint_key teacher` explicitly. Treat these stitched-run results as
-   exploratory characterization.
-3. Estimate a fixed post-peak trend rather than relying on a post-hoc
-   best-versus-final contrast.
-4. Run the COCO-Stuff selected-checkpoint evaluator on the same phenomenon
-   window, with the same probe seeds and teacher key, and compare it with
-   matching v2 VOC and raw/L2 structural diagnostics.
-5. Freeze a clean, fixed-horizon phenomenon reproduction with the primary
+2. Preserve the completed labels `180 / 250 / 318`, seeds
+   `42 / 1337 / 2027`, and their predeclared paired changes as stitched-run
+   exploratory evidence; do not reinterpret them as a clean-horizon gate.
+3. Freeze a clean, fixed-horizon phenomenon reproduction with the primary
    representation, schedule, endpoint, probe protocol, and seed handling
    declared before training.
-6. Only if that clean-horizon phenomenon gate passes, freeze one intervention
+4. Run the conditional COCO-Stuff consistency probe only if that clean-horizon
+   VOC gate reaches a scientific verdict.
+5. Only if that clean-horizon phenomenon gate passes, freeze one intervention
    fork, equivalence margin, stopping rule, and kill criterion, then migrate
    CLS-CRR for a matched C0-versus-C1 run.
-7. Defer a late KoLeo arm, additional fork points, and from-scratch
+6. Defer a late KoLeo arm, additional fork points, and from-scratch
    confirmation until the predeclared first-stage result justifies the
    additional budget.
 

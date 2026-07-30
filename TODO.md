@@ -9,13 +9,15 @@ repository or external experiment outputs are confirmed.
 - [x] Add an explicit VOC `--probe_seed`, reset it before every checkpoint
   head fit, and record it in the result JSON.
 - [x] Expose `VOC_PROBE_SEED` in the existing Colab and Kaggle notebooks.
-- [ ] Rerun epochs `180 / 250 / 318` with probe seeds
+- [x] Rerun epochs `180 / 250 / 318` with probe seeds
   `42 / 1337 / 2027`.
-- [ ] Report per-seed VOC rows, within-checkpoint mean/sample SD, and paired
+- [x] Report per-seed VOC rows, within-checkpoint mean/sample SD, and paired
   checkpoint changes.
-- [ ] Estimate a fixed post-peak slope or contrast without selecting the best
+- [x] Estimate a fixed post-peak slope or contrast without selecting the best
   checkpoint after viewing the reruns.
-- [ ] Run COCO-Stuff on the same selected phenomenon window.
+- [ ] Run COCO-Stuff only after a clean-horizon VOC gate reaches a scientific
+  verdict; the current `stitched` audit blocks this step.
+- [ ] Freeze and run a clean, matched, single-horizon baseline reproduction.
 - [ ] Freeze the first late-stage C0/C1 fork, endpoint, equivalence margin,
   stopping rule, and kill criterion.
 - [ ] Do not add a late KoLeo arm or more fork points unless the first C1
@@ -132,6 +134,9 @@ repository or external experiment outputs are confirmed.
 
 ## Priority 3: COCO-Stuff Selected Checkpoint Evaluation
 
+Status: evaluator complete; formal run blocked until a clean-horizon VOC gate
+reaches a scientific verdict.
+
 - [ ] Choose 4-6 checkpoints after the latest VOC/DSE sweep.
 - [ ] Use this selection rule:
 
@@ -144,7 +149,7 @@ repository or external experiment outputs are confirmed.
   latest available checkpoint
   ```
 
-- [ ] Implement or adapt a COCO-Stuff linear segmentation evaluator.
+- [x] Implement or adapt a COCO-Stuff linear segmentation evaluator.
 - [ ] Run COCO-Stuff only on selected checkpoints first.
 - [ ] Save selected-checkpoint results under:
 

@@ -16,11 +16,11 @@ The project is currently positioned as a diagnostic suite, not as a claim that t
 
 The working claim is:
 
-> The existing ImageNet-100 + DINO ViT-S/16 VOC sweep contains an apparent
-> peak-to-final decline, but those historical rows use the batch-mean-v1 mIoU
-> estimator and did not record or reset a probe seed. Until
-> `global_confusion_v2` fixed-checkpoint probes bound that noise, the curve is
-> a phenomenon signal rather than confirmed SDD evidence.
+> The completed three-seed `global_confusion_v2` fixed-checkpoint probes show
+> a repeatable label-180 to label-318 decline, but schedule identity changes
+> make the source trajectory `stitched`. The result is therefore a
+> stitched-run characterization rather than confirmed clean-horizon SDD
+> evidence.
 
 Current correction:
 
@@ -39,16 +39,15 @@ Complete these steps before implementing a late-stage mitigation:
    selected seed before each checkpoint so head initialization and minibatch
    order are matched across the curve. Use `--checkpoint_key teacher`
    explicitly for both VOC and COCO.
-3. Rerun VOC at fixed epochs `180`, `250`, and `318`; report every seed, mean,
-   sample standard deviation, and paired checkpoint changes from
-   `voc_miou_results_global_confusion_v2.json`.
-   Accept only rows that record checkpoint SHA256, probe configuration,
-   dataset identity, and a Git commit with `source_dirty=false`.
-4. Estimate a predeclared post-peak trend instead of selecting the maximum
-   after viewing the curve.
-5. Run the existing COCO-Stuff evaluator on the same selected checkpoints.
-6. Treat the selected-checkpoint reruns as stitched-run characterization, then
-   freeze a clean fixed-horizon phenomenon reproduction. Freeze an
+3. The fixed labels `180`, `250`, and `318` are complete for all three seeds.
+   Every accepted row records checkpoint SHA256, probe configuration, dataset
+   identity, and a clean source commit. The paired label-318 minus label-180
+   mean is `-1.39945` mIoU points with sample SD `0.01229`; this remains
+   descriptive because P0 is `stitched`.
+4. Preserve the predeclared paired contrast and OLS slope as stitched-run
+   characterization rather than selecting a post-hoc best checkpoint.
+5. Do not run the conditional COCO-Stuff evaluator under P0 `stitched`.
+6. Freeze a clean fixed-horizon phenomenon reproduction next. Freeze an
    intervention fork, primary contrast, equivalence margin, stop rule, and
    kill criterion only after that clean-horizon gate passes.
 
