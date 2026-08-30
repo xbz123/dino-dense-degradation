@@ -30,7 +30,8 @@ Current correction:
 
 Complete these steps before implementing a late-stage mitigation:
 
-1. The required checkpoints are retrieved, hashed, and archived offline. The
+1. The required checkpoints are retrieved, structurally inventoried, and
+   archived offline. The
    audit finds three target horizons (`200`, `300`, and `500`) and returns
    `stitched` with partial evidence. Retrieve every independent training
    session `log.txt` to localize the boundaries; logs cannot convert the
@@ -40,16 +41,17 @@ Complete these steps before implementing a late-stage mitigation:
    order are matched across the curve. Use `--checkpoint_key teacher`
    explicitly for both VOC and COCO.
 3. The fixed labels `180`, `250`, and `318` are complete for all three seeds.
-   Every accepted row records checkpoint SHA256, probe configuration, dataset
-   identity, and a clean source commit. The paired label-318 minus label-180
+   Every accepted row records structured checkpoint identity, probe
+   configuration, dataset identity, and a clean source commit. The paired
+   label-318 minus label-180
    mean is `-1.39945` mIoU points with sample SD `0.01229`; this remains
    descriptive because P0 is `stitched`.
 4. Preserve the predeclared paired contrast and OLS slope as stitched-run
    characterization rather than selecting a post-hoc best checkpoint.
 5. Do not run the conditional COCO-Stuff evaluator under P0 `stitched`.
-6. Freeze a clean fixed-horizon phenomenon reproduction next. Freeze an
-   intervention fork, primary contrast, equivalence margin, stop rule, and
-   kill criterion only after that clean-horizon gate passes.
+6. Run the separately registered clean fixed-horizon phenomenon reproduction
+   at source `7404e7fcddaa3702574697aa4fa7aa2bb3d1e8b3`. Freeze an intervention
+   fork only after that clean-horizon gate passes.
 
 If the clean-horizon gate later passes, the first late-stage experiment uses
 one fork and only two matched arms: C0 continuation and CLS-CRR continuation.
@@ -227,18 +229,23 @@ Use paired seeds `{42, 1337, 2027}`. A wider selected-checkpoint curve may be
 run later as exploratory context, but it cannot replace the registered
 180-versus-318 comparison.
 
-### Phase 5: Longer Training
+### Phase 5: Clean Single-Horizon Training
 
-Continue Kaggle training from the latest confirmed checkpoint.
+Run the registered baseline from epoch 0. Do not resume from the historical
+stitched checkpoints. Every Kaggle session checks out source `7404e7f` and
+uses `run_clean_horizon_kaggle.sh` with the same 319-completed-epoch contract.
 
 Training constraints:
 
 ```text
 --saveckp_freq 10
 --keep_last_ckpts 0
+--milestone_ckpt_epochs 180 250 318
+--strict_resume_schedule true
 ```
 
-Stop near Kaggle's 12-hour limit only after confirming a current epoch or checkpoint has safely completed. Start the next round only from a clearly verified newest checkpoint.
+The runtime guard stops only after a complete epoch and checkpoint. Resume the
+next round only from the immediately preceding accepted rolling checkpoint.
 
 ## Current File Responsibilities
 

@@ -62,8 +62,8 @@ The evaluation workflow:
   that representation in each output row.
 - Reports validation mIoU from a full-validation-set confusion matrix under
   `metric_version=global_confusion_v2`.
-- Records checkpoint SHA256, probe configuration, dataset identity, and Git
-  commit/dirty state in every result row; formal readers require
+- Records structured checkpoint identity, probe configuration, dataset
+  identity, and Git commit/dirty state in every result row; formal readers require
   `source_dirty=false`.
 - Produces an `mIoU vs. epoch` plot for dense degradation analysis.
 
@@ -97,6 +97,12 @@ three paired changes negative. All rows passed checkpoint, source, seed,
 metric, representation, probe, and dataset identity checks. Because the
 schedule audit is `stitched`, this is retained as stitched-run exploratory
 characterization and is not a clean-horizon SDD verdict.
+
+The clean single-horizon baseline is now registered before training at source
+`7404e7fcddaa3702574697aa4fa7aa2bb3d1e8b3`. It fixes one 319-completed-epoch
+schedule, backbone seed 0, labels `180 / 250 / 318`, T4 x2, effective batch
+256, and a fail-closed cross-session resume contract with per-rank RNG state.
+No clean-horizon output has been accepted yet.
 
 The repository also includes a Colab notebook for the current Drive-based
 evaluation workflow:
@@ -201,9 +207,8 @@ Planned research and engineering work:
 2. Preserve the completed labels `180 / 250 / 318`, seeds
    `42 / 1337 / 2027`, and their predeclared paired changes as stitched-run
    exploratory evidence; do not reinterpret them as a clean-horizon gate.
-3. Freeze a clean, fixed-horizon phenomenon reproduction with the primary
-   representation, schedule, endpoint, probe protocol, and seed handling
-   declared before training.
+3. Run the registered clean fixed-horizon phenomenon reproduction without
+   changing its source, schedule, endpoint, probe protocol, or seed handling.
 4. Run the conditional COCO-Stuff consistency probe only if that clean-horizon
    VOC gate reaches a scientific verdict.
 5. Only if that clean-horizon phenomenon gate passes, freeze one intervention

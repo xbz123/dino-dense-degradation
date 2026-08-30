@@ -169,9 +169,9 @@ to_epoch_XXXX/voc_all_checkpoints/voc_miou_results_global_confusion_v2.json
 Formal VOC/COCO runs must pass `--probe_seed` and `--checkpoint_key`
 explicitly. Readers must validate
 `metric_version=global_confusion_v2`, the expected probe seed, and the expected
-checkpoint key before combining rows. Formal rows must also carry checkpoint
-SHA256, probe configuration, dataset identity, representation, and Git
-commit with `source_dirty=false`. Historical `voc_miou_results.json`
+checkpoint key before combining rows. Formal rows must also carry structured
+checkpoint identity, probe configuration, dataset identity, representation,
+and Git commit with `source_dirty=false`. Historical `voc_miou_results.json`
 batch-mean-v1 rows may
 be read only through an explicit legacy mode and must not enter a v2 plot,
 table, comparison, or decision gate.

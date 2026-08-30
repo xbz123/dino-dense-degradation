@@ -17,7 +17,10 @@ repository or external experiment outputs are confirmed.
   checkpoint after viewing the reruns.
 - [ ] Run COCO-Stuff only after a clean-horizon VOC gate reaches a scientific
   verdict; the current `stitched` audit blocks this step.
-- [ ] Freeze and run a clean, matched, single-horizon baseline reproduction.
+- [x] Freeze and implement the clean, matched, single-horizon baseline
+  reproduction at source `7404e7f`.
+- [ ] Run the clean-horizon baseline to label 318 and independently accept all
+  session checkpoints and summaries.
 - [ ] Freeze the first late-stage C0/C1 fork, endpoint, equivalence margin,
   stopping rule, and kill criterion.
 - [ ] Do not add a late KoLeo arm or more fork points unless the first C1
@@ -159,31 +162,39 @@ reaches a scientific verdict.
 
 - [ ] Compare COCO-Stuff mIoU with VOC mIoU and structural diagnostics.
 
-## Priority 4: Continue Training
+## Priority 4: Clean Single-Horizon Training
 
-- [ ] Continue Kaggle training from the latest verified checkpoint after epoch
-  215.
+- [ ] Start the registered seed-0 baseline from epoch 0; never use a historical
+  stitched checkpoint as its parent.
 - [ ] Preserve:
 
   ```text
+  --epochs 319
   --saveckp_freq 10
   --keep_last_ckpts 0
+  --milestone_ckpt_epochs 180 250 318
+  --strict_resume_schedule true
   ```
 
 - [ ] Before each new Kaggle round, verify the selected resume checkpoint:
 
   ```text
-  filename epoch
+  filename epoch or rolling-checkpoint role
   checkpoint["epoch"] internal value
   file size
-  output path
+  structured training contract
+  per-rank RNG state count
+  output path and preceding Kaggle Version
   ```
 
 - [ ] Near Kaggle's 12-hour limit, stop only after a current epoch or checkpoint
   is safely completed.
 - [ ] After each round, confirm the newest checkpoint appears in output or Drive.
-- [ ] Add new checkpoints to `MyDrive/dinocheckpoint`.
-- [ ] Re-run Colab evaluation for the new `to_epoch_XXXX` horizon.
+- [ ] Preserve each session summary and log without concatenating versions.
+- [ ] At labels 180, 250, and 318, copy the accepted milestone checkpoint into
+  the clean-baseline evaluation input.
+- [ ] Run the registered three-probe-seed VOC gate only after label 318 is
+  accepted.
 
 ## Priority 5: Stress Tests and Closer Paper Alignment
 

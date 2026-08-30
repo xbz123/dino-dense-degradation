@@ -37,6 +37,11 @@ workflow expects historical checkpoints every 10 epochs and keeps them all:
 
 ## Quick Start (Google Colab)
 
+The commands below are historical exploratory examples. They are not the
+current registered clean-horizon experiment. Formal continuation now uses the
+[clean-horizon protocol](CLEAN_HORIZON_BASELINE_PROTOCOL_2026-08-30.md) and
+[Kaggle guide](KAGGLE_GUIDE.md), pinned to source `7404e7f`.
+
 ### 1. Setup
 ```python
 # Clone this repo
@@ -119,8 +124,9 @@ VOC probe randomness is explicit. `eval_voc_dense.py` accepts
 it in `voc_miou_results_global_confusion_v2.json`. Formal runs also pass
 `--checkpoint_key teacher` explicitly and record the selected representation.
 Metric v2 accumulates intersections and unions over the full validation set
-before averaging per-class IoU. Each formal row also records the checkpoint
-SHA256, probe configuration, dataset identity, and Git commit/dirty state.
+before averaging per-class IoU. Each formal row also records structured
+checkpoint identity, probe configuration, dataset identity, and Git
+commit/dirty state.
 Formal readers require `source_dirty=false`.
 The notebooks expose these settings as `VOC_PROBE_SEED` and
 `VOC_CHECKPOINT_KEY`; use separate output directories when measuring multiple
@@ -176,7 +182,12 @@ MyDrive/dino_dense_degradation_eval/to_epoch_XXXX/
 | `--attn_viz_every` | `50` | Save attention maps every N epochs |
 | `--diag_num_batches` | `50` | Validation batches for diagnostics |
 | `--accum_steps` | `1` | Gradient accumulation steps |
+| `--drop_incomplete_accumulation` | `false` | Drop a final partial accumulation group |
 | `--keep_last_ckpts` | `0` | Keep last N periodic checkpoints; `0` keeps all |
+| `--milestone_ckpt_epochs` | empty | Always save selected zero-based labels |
+| `--strict_resume_schedule` | `false` | Require an exact saved training contract and RNG state |
+| `--expected_world_size` | `0` | Require one distributed world size when non-zero |
+| `--max_runtime_hours` | `0` | Enable epoch-boundary session runtime guard |
 
 ## Expected Observations
 

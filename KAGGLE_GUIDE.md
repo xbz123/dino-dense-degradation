@@ -6,7 +6,8 @@
 
 ## 第一阶段：环境与数据准备
 
-1. **新建 Notebook**：在 Kaggle 首页点击 `+ Create` → `New Notebook`。
+1. **复用现有 DINO 训练 Notebook**：不要新建 Notebook；每轮都在同一
+   Notebook 里通过 `Save Version + Run All` 提交。
 2. **开启双卡配置**：在右侧面板底部的 `Session Options` 中：
    - `Accelerator` 选择 **`GPU T4 x2`**
    - `Internet` 开关**打开**（用于 clone GitHub 代码）
@@ -18,9 +19,11 @@
      训练集: /kaggle/input/datasets/wilyzh/imagenet100/ImageNet100/train
      验证集: /kaggle/input/datasets/wilyzh/imagenet100/ImageNet100/val
      ```
-4. **（可选）挂载历史 checkpoint**：
-   - 如果你想接着之前的进度跑（从 Colab 或上一轮 Kaggle），把 `checkpoint.pth` 作为私有 Dataset 上传到 Kaggle
-   - 然后同样通过 `+ Add Input` 挂载进来
+4. **续跑轮挂载上一轮 Notebook Output**：
+   - 第一轮只挂载 ImageNet-100，从 epoch 0 开始；
+   - 后续轮通过 `+ Add Input` 挂载上一轮成功 Version 的 Output；
+   - 只使用其 `dino_clean_horizon_seed0/checkpoint.pth`，不得使用历史
+     stitched checkpoint。
 
 ---
 
@@ -34,6 +37,8 @@
 %cd /kaggle/working
 !rm -rf /kaggle/working/dino
 !git clone https://github.com/xbz123/dino-dense-degradation.git /kaggle/working/dino
+%cd /kaggle/working/dino
+!git checkout --detach 7404e7fcddaa3702574697aa4fa7aa2bb3d1e8b3
 ```
 
 > ⚠️ 必须先 `%cd /kaggle/working`，否则删除 dino 文件夹后 shell 会找不到当前目录而报错。
@@ -43,32 +48,26 @@
 ```python
 %cd /kaggle/working/dino
 !git rev-parse HEAD
-!python -m py_compile main_dino.py utils.py dense_diagnostics.py
+!git status --porcelain
+!python -m py_compile main_dino.py utils.py clean_horizon_contract.py
 ```
 
-当前仓库已经在 `utils.py` 和评估脚本中使用 `torch.load(..., weights_only=False)`，不需要再在 Kaggle Notebook 里手动修改源码。
+HEAD 必须精确输出 `7404e7fcddaa3702574697aa4fa7aa2bb3d1e8b3`，且
+`git status --porcelain` 必须为空。Notebook 中不得临时改源码。
 
 ### Cell 3：设置断点续训路径
 
 ```python
 import os
 
-output_dir = '/kaggle/working/dino_output'
-os.makedirs(output_dir, exist_ok=True)
+os.environ['CLEAN_HORIZON_REPO_DIR'] = '/kaggle/working/dino'
+os.environ['CLEAN_HORIZON_OUTPUT_DIR'] = '/kaggle/working/dino_clean_horizon_seed0'
+os.environ['CLEAN_HORIZON_DATA_PATH'] = '/kaggle/input/datasets/wilyzh/imagenet100/ImageNet100/train'
+os.environ['CLEAN_HORIZON_VAL_PATH'] = '/kaggle/input/datasets/wilyzh/imagenet100/ImageNet100/val'
 
-# 如果你挂载了上一轮 Notebook Output 或 checkpoint Dataset，请把这里改成实际路径。
-# 示例：
-#   '/kaggle/input/dino-train-v2/dino_output/checkpoint.pth'
-#   '/kaggle/input/dino-ckp/checkpoint0180.pth'
-# 第一次从头训练时保留为空字符串。
-resume_ckpt = ''
-
-if resume_ckpt and os.path.exists(resume_ckpt):
-    resume_from_arg = f'--resume_from {resume_ckpt}'
-    print('Resume checkpoint:', resume_ckpt)
-else:
-    resume_from_arg = ''
-    print('No resume checkpoint configured; training will start from output_dir/checkpoint.pth if it exists, otherwise epoch 0.')
+# 第一轮必须留空。后续轮只填上一轮成功 Version 的 rolling checkpoint。
+os.environ['CLEAN_HORIZON_RESUME_FROM'] = ''
+print('Resume:', os.environ['CLEAN_HORIZON_RESUME_FROM'] or 'fresh epoch 0')
 ```
 
 ### Cell 4：确认数据路径（可选，首次运行建议执行）
@@ -87,36 +86,22 @@ print(f"Val classes: {len(os.listdir(val_path))}")
 ```python
 %cd /kaggle/working/dino
 
-!torchrun --nproc_per_node=2 main_dino.py \
-    --arch vit_small \
-    --patch_size 16 \
-    --epochs 300 \
-    --batch_size_per_gpu 64 \
-    --accum_steps 2 \
-    --warmup_teacher_temp_epochs 30 \
-    --data_path /kaggle/input/datasets/wilyzh/imagenet100/ImageNet100/train \
-    --val_data_path /kaggle/input/datasets/wilyzh/imagenet100/ImageNet100/val \
-    --output_dir /kaggle/working/dino_output \
-    {resume_from_arg} \
-    --saveckp_freq 10 \
-    --keep_last_ckpts 0 \
-    --diag_every 5 \
-    --attn_viz_every 25 \
-    --use_fp16 true \
-    --local_crops_number 4 \
-    --num_workers 2 \
-    --teacher_temp 0.07 \
-    --norm_last_layer false
+!bash run_clean_horizon_kaggle.sh
 ```
 
 **参数说明：**
 - `--nproc_per_node=2`：使用 2 张 T4 GPU 并行训练
 - `--batch_size_per_gpu 64 × 2卡 × --accum_steps 2 = 256` 等效批次大小
-- `--resume_from`：直接读取挂载的历史 checkpoint；不需要复制覆盖 `/kaggle/working/dino_output/checkpoint.pth`
+- `--epochs 319`：固定一个 schedule，零基 label 范围为 `0..318`
+- `--drop_incomplete_accumulation true`：每 epoch 使用 988 个 micro-batches、
+  494 个完整 optimizer steps，不执行第 989 个不完整 accumulation group
+- `--resume_from`：只读取上一轮同一 clean-horizon run 的 rolling checkpoint
 - `--saveckp_freq 10`：每 10 个 epoch 保存一次历史 checkpoint
 - `--keep_last_ckpts 0`：保留所有历史 checkpoint，便于后续 dense degradation sweep
+- `--milestone_ckpt_epochs 180 250 318`：强制保留正式评测点
 - `--local_crops_number 4`：减少到 4 个局部裁切（节省约 25% 计算）
 - `--diag_every 5`：每 5 个 epoch 运行一次稠密退化诊断
+- runtime guard 会在完整 epoch/checkpoint 后退出，为 Kaggle 封存预留时间
 - 显存占用约 9.6 GB / 16 GB，每 epoch 约 40 分钟
 
 ---
@@ -134,14 +119,21 @@ print(f"Val classes: {len(os.listdir(val_path))}")
 
 ## 第四阶段：收获结果与开启下一轮循环
 
-12 个小时后（或第二天）：
+Version 结束后：
 
-1. 打开你的 Notebook，在 **`Output`** 标签页找到 `dino_output/checkpoint.pth` 或最新的 `dino_output/checkpointXXXX.pth`
+1. 在 **`Output`** 中检查
+   `dino_clean_horizon_seed0/clean_horizon_session_summary.json`。状态必须是
+   `partial_runtime_guard` 或 `complete`，rolling checkpoint 的记录大小必须
+   与 `dino_clean_horizon_seed0/checkpoint.pth` 一致。
 2. **开启下一轮**：
    - 点击 `Edit` 回到编辑界面
    - 点击右侧 `+ Add Input` → 选择 `Your Work` → 挂载你**自己上一轮的 Notebook**
-   - 把 Cell 3 里的 `resume_ckpt` 改成新挂载的路径（通常是 `/kaggle/input/你的notebook名/dino_output/checkpoint.pth`，也可以选择最新的 `checkpointXXXX.pth`）
+   - 把 Cell 3 的 `CLEAN_HORIZON_RESUME_FROM` 改成上一轮挂载路径下的
+     `dino_clean_horizon_seed0/checkpoint.pth`
    - 再次 `Save Version` → `Save & Run All`，开始新的 12 小时挂机
+
+不得从任意历史 `checkpoint0180.pth`、stitched run 或其他源码版本继续。
+每一轮只接受结构化 contract 完全一致且可加载的 rolling checkpoint。
 
 ---
 
@@ -279,7 +271,7 @@ coco_stuff_summary_global_confusion_v2.md
 对 `1337` 和 `2027` 分别重复正式命令，并使用 seed 专属输出目录。比较器
 会 fail closed：VOC 与 COCO 的 `metric_version` 必须都是
 `global_confusion_v2`，且 `probe_seed`、`checkpoint_key`、representation、
-checkpoint SHA256 和源码 commit/dirty 状态必须完全匹配。每行还必须保留
+checkpoint structured identity 和源码 commit/dirty 状态必须完全匹配。每行还必须保留
 probe 配方和数据身份，并满足 `source_dirty=false`。
 
 判断标准：

@@ -111,8 +111,8 @@ coco_stuff_miou_results_global_confusion_v2.json
 The evaluator accumulates one confusion matrix over the complete validation
 set before computing per-class IoU and mIoU. Every formal row records
 `metric_version`, `probe_seed`, `checkpoint_key`, `representation`, checkpoint
-path and SHA256, probe configuration, dataset identity, and Git commit/dirty
-state. Formal readers require `source_dirty=false`.
+path and structured identity, probe configuration, dataset identity, and Git
+commit/dirty state. Formal readers require `source_dirty=false`.
 
 Historical `voc_miou_results.json` rows use batch-mean-v1. They remain
 readable only through an explicit legacy mode and are not eligible for v2
@@ -206,6 +206,22 @@ Rationale:
   C1 efficacy is established.
 - The equivalence margin, stopping rule, and kill criterion must be frozen
   before the intervention run.
+
+### Decision: Run the clean baseline as one 319-completed-epoch contract
+
+The clean baseline uses source
+`7404e7fcddaa3702574697aa4fa7aa2bb3d1e8b3`, Kaggle T4 x2, backbone seed 0,
+and one target of 319 completed epochs. Experiment labels remain zero-based,
+so formal labels `180 / 250 / 318` correspond to internal completed epochs
+`181 / 251 / 319`.
+
+Every session uses the same training contract and restores model, optimizer,
+scaler, DINO center, and per-rank RNG state. The ImageNet-100 loader exposes
+989 micro-batches per epoch; the last incomplete accumulation group is
+discarded so all 494 optimizer steps use effective batch 256. Any skipped AMP
+step, non-finite loss, contract mismatch, or incomplete checkpoint invalidates
+the session. The full gate is frozen in
+`CLEAN_HORIZON_BASELINE_PROTOCOL_2026-08-30.md`.
 
 ### Decision: DSE and patch diagnostics are required companion evidence
 
