@@ -104,6 +104,12 @@ schedule, backbone seed 0, labels `180 / 250 / 318`, T4 x2, effective batch
 256, and a fail-closed cross-session resume contract with per-rank RNG state.
 No clean-horizon output has been accepted yet.
 
+Kaggle Version 20 (`346119135`,
+`clean-horizon-seed0-session1-v1`) has started from epoch 0 on T4 x2 with only
+ImageNet100 attached. Initial logs confirm the pinned source, two GPUs, seed 0,
+100-class layout, and frozen 319-completed-epoch horizon. The run is still in
+progress and is not accepted evidence.
+
 The repository also includes a Colab notebook for the current Drive-based
 evaluation workflow:
 

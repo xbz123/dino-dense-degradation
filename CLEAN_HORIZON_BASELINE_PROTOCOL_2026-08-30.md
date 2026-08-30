@@ -140,3 +140,20 @@ No file-content digest is part of training, resume, evaluation, or artifact
 acceptance. Acceptance uses checkpoint loadability, internal epoch, structured
 training identity, file size, directory structure, source state, and actual
 run outputs.
+
+## Execution Record
+
+Session 1 was submitted after registration through the existing Kaggle
+Notebook `bingzhouxie/dino-train`:
+
+- Kaggle Version: 20;
+- script version: `346119135`;
+- version name: `clean-horizon-seed0-session1-v1`;
+- accelerator: GPU T4 x2;
+- input: ImageNet100 only;
+- resume mode: fresh epoch 0;
+- source checkout: `7404e7fcddaa3702574697aa4fa7aa2bb3d1e8b3`;
+- launch status at the initial check: running, with no startup error.
+
+This is an execution record, not an accepted training result. Acceptance waits
+for the published session summary and rolling checkpoint.

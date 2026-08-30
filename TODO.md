@@ -164,8 +164,8 @@ reaches a scientific verdict.
 
 ## Priority 4: Clean Single-Horizon Training
 
-- [ ] Start the registered seed-0 baseline from epoch 0; never use a historical
-  stitched checkpoint as its parent.
+- [x] Start the registered seed-0 baseline from epoch 0 as Kaggle Version 20;
+  no historical stitched checkpoint is its parent.
 - [ ] Preserve:
 
   ```text
