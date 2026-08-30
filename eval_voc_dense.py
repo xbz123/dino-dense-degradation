@@ -22,7 +22,6 @@ import math
 import random
 import argparse
 import difflib
-import hashlib
 import subprocess
 import numpy as np
 from functools import partial
@@ -39,13 +38,112 @@ GLOBAL_CONFUSION_METRIC_VERSION = 'global_confusion_v2'
 VOC_V2_RESULTS_FILENAME = 'voc_miou_results_global_confusion_v2.json'
 
 
-def file_sha256(path, chunk_size=8 * 1024 * 1024):
-    """Return the SHA256 of an artifact without loading it into memory."""
-    digest = hashlib.sha256()
-    with open(path, 'rb') as handle:
-        for chunk in iter(lambda: handle.read(chunk_size), b''):
-            digest.update(chunk)
-    return digest.hexdigest()
+_CHECKPOINT_MODEL_FIELDS = (
+    'arch',
+    'patch_size',
+    'out_dim',
+    'norm_last_layer',
+    'use_bn_in_head',
+    'drop_path_rate',
+)
+_CHECKPOINT_SCHEDULE_FIELDS = (
+    'epochs',
+    'warmup_epochs',
+    'min_lr',
+    'lr',
+    'weight_decay',
+    'weight_decay_end',
+    'momentum_teacher',
+    'warmup_teacher_temp',
+    'teacher_temp',
+    'warmup_teacher_temp_epochs',
+    'freeze_last_layer',
+    'optimizer',
+    'use_fp16',
+    'global_crops_scale',
+    'local_crops_number',
+    'local_crops_scale',
+    'batch_size_per_gpu',
+    'accum_steps',
+    'drop_incomplete_accumulation',
+    'saveckp_freq',
+    'keep_last_ckpts',
+    'milestone_ckpt_epochs',
+    'run_name',
+)
+
+
+def _checkpoint_config_mapping(value):
+    if isinstance(value, dict):
+        return value
+    try:
+        return vars(value)
+    except TypeError:
+        return {}
+
+
+def _json_safe_checkpoint_value(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_checkpoint_value(item) for item in value]
+    if hasattr(value, 'item'):
+        return _json_safe_checkpoint_value(value.item())
+    return str(value)
+
+
+def _checkpoint_training_config(checkpoint, arch, patch_size):
+    training_contract = checkpoint.get('training_contract')
+    if isinstance(training_contract, dict):
+        source = _checkpoint_config_mapping(training_contract.get('training_config'))
+    else:
+        source = {}
+    if not source:
+        source = _checkpoint_config_mapping(checkpoint.get('args'))
+
+    def value(field, default=None):
+        return _json_safe_checkpoint_value(source.get(field, default))
+
+    return {
+        'schedule': {
+            field: value(field)
+            for field in _CHECKPOINT_SCHEDULE_FIELDS
+        },
+        'model': {
+            field: value(
+                field,
+                arch if field == 'arch' else patch_size if field == 'patch_size' else None,
+            )
+            for field in _CHECKPOINT_MODEL_FIELDS
+        },
+        'seed': value('seed'),
+    }
+
+
+def build_checkpoint_identity(ckpt_path, checkpoint, arch='vit_small', patch_size=16):
+    """Build a structured identity from the checkpoint loaded for evaluation."""
+    completed_epochs = checkpoint.get('epoch') if isinstance(checkpoint, dict) else None
+    if (
+        isinstance(completed_epochs, bool)
+        or not isinstance(completed_epochs, int)
+        or completed_epochs <= 0
+    ):
+        raise ValueError(
+            f"Checkpoint {ckpt_path} must contain a positive integer epoch"
+        )
+    size_bytes = os.path.getsize(ckpt_path)
+    if size_bytes <= 0:
+        raise ValueError(f"Checkpoint {ckpt_path} has non-positive size")
+    return {
+        'basename': os.path.basename(ckpt_path),
+        'size_bytes': int(size_bytes),
+        'completed_epochs': completed_epochs,
+        'training_config': _checkpoint_training_config(
+            checkpoint,
+            arch=arch,
+            patch_size=patch_size,
+        ),
+    }
 
 
 def get_source_state(repo_dir=None):
@@ -416,6 +514,7 @@ def load_dino_backbone(
     patch_size=16,
     checkpoint_key='teacher',
     allow_partial=False,
+    return_identity=False,
 ):
     """Load one explicitly selected DINO representation into a frozen backbone."""
     if checkpoint_key not in {'teacher', 'student'}:
@@ -429,6 +528,12 @@ def load_dino_backbone(
             f"Checkpoint {ckpt_path} does not contain required key "
             f"'{checkpoint_key}'; available keys: {available}"
         )
+    checkpoint_identity = build_checkpoint_identity(
+        ckpt_path,
+        checkpoint,
+        arch=arch,
+        patch_size=patch_size,
+    )
     state_dict = checkpoint[checkpoint_key]
 
     msg = load_backbone_state(model, state_dict, allow_partial=allow_partial)
@@ -442,6 +547,8 @@ def load_dino_backbone(
         param.requires_grad = False
     model.eval()
 
+    if return_identity:
+        return model, checkpoint_identity
     return model
 
 
@@ -814,13 +921,16 @@ def main():
     results = []
     for i, (epoch, ckpt_path) in enumerate(ckpt_files):
         print(f"\n[{i + 1}/{len(ckpt_files)}] Evaluating Epoch {epoch}...")
-        checkpoint_digest = file_sha256(ckpt_path)
-        print(f"  Checkpoint SHA256: {checkpoint_digest}")
 
         # Load frozen backbone
-        model = load_dino_backbone(ckpt_path, arch=args.arch, patch_size=args.patch_size,
-                                   checkpoint_key=args.checkpoint_key,
-                                   allow_partial=args.allow_partial_load)
+        model, checkpoint_identity = load_dino_backbone(
+            ckpt_path,
+            arch=args.arch,
+            patch_size=args.patch_size,
+            checkpoint_key=args.checkpoint_key,
+            allow_partial=args.allow_partial_load,
+            return_identity=True,
+        )
         model = model.to(device)
 
         # Extract features (frozen backbone, no gradients)
@@ -876,7 +986,7 @@ def main():
                 'ema_teacher' if args.checkpoint_key == 'teacher' else 'student'
             ),
             'checkpoint': str(ckpt_path),
-            'checkpoint_sha256': checkpoint_digest,
+            'checkpoint_identity': checkpoint_identity,
             'probe_config': probe_config,
             'dataset_identity': dataset_identity,
             **source_state,

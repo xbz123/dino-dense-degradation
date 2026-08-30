@@ -9,21 +9,11 @@ import utils
 from eval_voc_dense import (
     compute_confusion_counts,
     compute_miou,
-    file_sha256,
     load_backbone_state,
     load_dino_backbone,
     train_linear_head,
     vit_small,
 )
-
-
-def test_file_sha256_streams_stable_artifact_identity(tmp_path):
-    artifact = tmp_path / "checkpoint.pth"
-    artifact.write_bytes(b"checkpoint-fixture")
-
-    assert file_sha256(artifact, chunk_size=3) == (
-        "5d4fa22c80243cdb189dacdbf82968cd517e5153f568cb38f1592da625fdd9e0"
-    )
 
 
 def test_global_vs_batch_mean_hand_case():
@@ -157,6 +147,43 @@ def test_load_dino_backbone_requires_explicit_checkpoint_key(tmp_path, monkeypat
 
     with pytest.raises(KeyError, match="teacher"):
         load_dino_backbone(path, checkpoint_key='teacher')
+
+
+def test_load_dino_backbone_returns_structured_checkpoint_identity(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        eval_voc_dense,
+        'vit_small',
+        lambda patch_size: torch.nn.Linear(2, 2),
+    )
+    path = tmp_path / 'checkpoint0180.pth'
+    torch.save(
+        {
+            'teacher': torch.nn.Linear(2, 2).state_dict(),
+            'epoch': 181,
+            'args': {
+                'arch': 'vit_small',
+                'patch_size': 16,
+                'epochs': 800,
+                'warmup_epochs': 10,
+                'seed': 0,
+            },
+        },
+        path,
+    )
+
+    model, identity = load_dino_backbone(
+        path,
+        checkpoint_key='teacher',
+        return_identity=True,
+    )
+
+    assert isinstance(model, torch.nn.Module)
+    assert identity['basename'] == 'checkpoint0180.pth'
+    assert identity['size_bytes'] == path.stat().st_size
+    assert identity['completed_epochs'] == 181
+    assert identity['training_config']['model']['arch'] == 'vit_small'
+    assert identity['training_config']['schedule']['epochs'] == 800
+    assert identity['training_config']['seed'] == 0
 
 
 def test_restart_from_checkpoint_rejects_partial_module(tmp_path, monkeypatch):

@@ -123,7 +123,7 @@ def voc_provenance_lines(voc_rows: list[dict], *, protocol: str) -> list[str]:
         f"- VOC source commit: `{first['source_commit']}`",
         f"- VOC source dirty: `{first['source_dirty']}`",
         f"- VOC dataset: `{first['dataset_identity'].get('name', 'unrecorded')}`",
-        f"- VOC checkpoint hashes recorded: `{len(voc_rows)}`",
+        f"- VOC checkpoint identities recorded: `{len(voc_rows)}`",
     ]
 
 

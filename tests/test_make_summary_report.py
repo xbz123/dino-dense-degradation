@@ -25,7 +25,16 @@ def test_report_reader_validates_v2_protocol(tmp_path):
             "checkpoint_key": "teacher",
             "representation": "ema_teacher",
             "checkpoint": "/checkpoints/checkpoint0180.pth",
-            "checkpoint_sha256": "1" * 64,
+            "checkpoint_identity": {
+                "basename": "checkpoint0180.pth",
+                "size_bytes": 123,
+                "completed_epochs": 181,
+                "training_config": {
+                    "schedule": {"epochs": 800},
+                    "model": {"arch": "vit_small", "patch_size": 16},
+                    "seed": 0,
+                },
+            },
             "probe_config": {"train_epochs": 15},
             "dataset_identity": {"name": "fixture"},
             "source_commit": "a" * 40,
@@ -43,7 +52,8 @@ def test_report_reader_validates_v2_protocol(tmp_path):
     assert rows[0]["miou"] == 30.8
     provenance = "\n".join(voc_provenance_lines(rows, protocol="v2"))
     assert "VOC source commit" in provenance
-    assert "VOC checkpoint hashes recorded: `1`" in provenance
+    assert "VOC checkpoint identities recorded: `1`" in provenance
+    assert "hash" not in provenance.lower()
 
     with pytest.raises(ValueError, match="requires"):
         read_protocol_voc_rows(

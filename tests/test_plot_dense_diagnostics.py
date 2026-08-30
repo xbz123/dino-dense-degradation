@@ -90,7 +90,16 @@ def test_v2_reader_requires_and_validates_protocol(tmp_path):
             "checkpoint_key": "teacher",
             "representation": "ema_teacher",
             "checkpoint": "/checkpoints/checkpoint0180.pth",
-            "checkpoint_sha256": "1" * 64,
+            "checkpoint_identity": {
+                "basename": "checkpoint0180.pth",
+                "size_bytes": 123,
+                "completed_epochs": 181,
+                "training_config": {
+                    "schedule": {"epochs": 800},
+                    "model": {"arch": "vit_small", "patch_size": 16},
+                    "seed": 0,
+                },
+            },
             "probe_config": {"train_epochs": 15},
             "dataset_identity": {"name": "fixture"},
             "source_commit": "a" * 40,

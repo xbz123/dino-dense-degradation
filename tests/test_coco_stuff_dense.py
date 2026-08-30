@@ -227,7 +227,16 @@ def _v2_result(
         "checkpoint_key": checkpoint_key,
         "representation": "ema_teacher" if checkpoint_key == "teacher" else "student",
         "checkpoint": f"/checkpoints/checkpoint{epoch:04d}.pth",
-        "checkpoint_sha256": f"{epoch:064x}",
+        "checkpoint_identity": {
+            "basename": f"checkpoint{epoch:04d}.pth",
+            "size_bytes": 123,
+            "completed_epochs": epoch + 1,
+            "training_config": {
+                "schedule": {"epochs": 800},
+                "model": {"arch": "vit_small", "patch_size": 16},
+                "seed": 0,
+            },
+        },
         "probe_config": {"train_epochs": 15},
         "dataset_identity": {"name": "fixture"},
         "source_commit": "a" * 40,
@@ -305,7 +314,6 @@ def test_write_comparison_csv_merges_protocol_matched_v2_results(tmp_path):
         ({"metric_version": "batch_mean_v1"}, "metric_version"),
         ({"probe_seed": 1337}, "probe_seed"),
         ({"checkpoint_key": "student", "representation": "student"}, "checkpoint_key"),
-        ({"checkpoint_sha256": "f" * 64}, "checkpoint_sha256"),
     ],
 )
 def test_write_comparison_csv_rejects_mismatched_voc_protocol(
@@ -321,6 +329,22 @@ def test_write_comparison_csv_rejects_mismatched_voc_protocol(
     with pytest.raises(ValueError, match=match):
         write_comparison_csv(
             coco_results=[_v2_result(180, 29.5)],
+            voc_json_path=voc_path,
+            dense_summary_csv_path=None,
+            output_path=tmp_path / "comparison.csv",
+        )
+
+
+def test_write_comparison_csv_rejects_voc_coco_checkpoint_identity_mismatch(tmp_path):
+    voc_path = tmp_path / "voc.json"
+    voc_row = _v2_result(180, 30.8)
+    coco_row = _v2_result(180, 29.5)
+    coco_row["checkpoint_identity"]["size_bytes"] += 1
+    voc_path.write_text(json.dumps([voc_row]))
+
+    with pytest.raises(ValueError, match="checkpoint_identity"):
+        write_comparison_csv(
+            coco_results=[coco_row],
             voc_json_path=voc_path,
             dense_summary_csv_path=None,
             output_path=tmp_path / "comparison.csv",

@@ -11,11 +11,18 @@ from pathlib import Path
 V2_PROVENANCE_FIELDS = {
     "representation",
     "checkpoint",
-    "checkpoint_sha256",
+    "checkpoint_identity",
     "probe_config",
     "dataset_identity",
     "source_commit",
     "source_dirty",
+}
+
+CHECKPOINT_IDENTITY_FIELDS = {
+    "basename",
+    "size_bytes",
+    "completed_epochs",
+    "training_config",
 }
 
 
@@ -36,6 +43,50 @@ def read_csv_rows(path: str | Path) -> list[dict]:
     with Path(path).open() as handle:
         rows = [{key: to_number(value) for key, value in row.items()} for row in csv.DictReader(handle)]
     return sorted(rows, key=lambda row: row["epoch"])
+
+
+def validate_checkpoint_identity(row: dict, *, label: str = "VOC") -> None:
+    """Validate the structured identity recorded for one result row."""
+    identity = row.get("checkpoint_identity")
+    epoch = row.get("epoch")
+    if not isinstance(identity, dict):
+        raise ValueError(
+            f"{label} result for epoch {epoch} has invalid checkpoint_identity; "
+            "expected a mapping"
+        )
+    missing = sorted(CHECKPOINT_IDENTITY_FIELDS.difference(identity))
+    if missing:
+        raise ValueError(
+            f"{label} result for epoch {epoch} checkpoint_identity is missing "
+            f"required fields: {missing}"
+        )
+    if not isinstance(identity["basename"], str) or not identity["basename"]:
+        raise ValueError(
+            f"{label} result for epoch {epoch} has invalid checkpoint_identity basename"
+        )
+    size_bytes = identity["size_bytes"]
+    if isinstance(size_bytes, bool) or not isinstance(size_bytes, int) or size_bytes <= 0:
+        raise ValueError(
+            f"{label} result for epoch {epoch} has invalid checkpoint_identity size_bytes"
+        )
+    completed_epochs = identity["completed_epochs"]
+    if isinstance(completed_epochs, bool) or not isinstance(completed_epochs, int):
+        raise ValueError(
+            f"{label} result for epoch {epoch} has invalid checkpoint_identity "
+            "completed_epochs"
+        )
+    if isinstance(epoch, bool) or not isinstance(epoch, int):
+        raise ValueError(f"{label} result has invalid experiment epoch {epoch!r}")
+    if completed_epochs != epoch + 1:
+        raise ValueError(
+            f"{label} result for epoch {epoch} has checkpoint_identity "
+            f"completed_epochs={completed_epochs}; expected {epoch + 1}"
+        )
+    if not isinstance(identity["training_config"], dict):
+        raise ValueError(
+            f"{label} result for epoch {epoch} has invalid checkpoint_identity "
+            "training_config"
+        )
 
 
 def read_voc_results(
@@ -100,11 +151,7 @@ def read_voc_results(
                     f"VOC result for epoch {row.get('epoch')} is missing required "
                     f"provenance fields: {missing}"
                 )
-            if not re.fullmatch(r"[0-9a-f]{64}", str(row["checkpoint_sha256"])):
-                raise ValueError(
-                    f"VOC result for epoch {row.get('epoch')} has invalid "
-                    "checkpoint_sha256"
-                )
+            validate_checkpoint_identity(row, label="VOC")
             if not re.fullmatch(r"[0-9a-f]{40,64}", str(row["source_commit"])):
                 raise ValueError(
                     f"VOC result for epoch {row.get('epoch')} has invalid "

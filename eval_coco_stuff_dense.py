@@ -42,12 +42,15 @@ from eval_voc_dense import (
     compute_miou,
     discover_checkpoints,
     extract_features,
-    file_sha256,
     get_source_state,
     load_dino_backbone,
     train_linear_head,
 )
-from dense_results_io import V2_PROVENANCE_FIELDS, read_voc_results
+from dense_results_io import (
+    V2_PROVENANCE_FIELDS,
+    read_voc_results,
+    validate_checkpoint_identity,
+)
 
 
 COCO_V2_RESULTS_FILENAME = "coco_stuff_miou_results_global_confusion_v2.json"
@@ -325,11 +328,7 @@ def _validate_v2_results(
                 f"{label} result for epoch {row.get('epoch')} is missing "
                 f"required fields: {missing}"
             )
-        if not re.fullmatch(r"[0-9a-f]{64}", str(row["checkpoint_sha256"])):
-            raise ValueError(
-                f"{label} result for epoch {row.get('epoch')} has invalid "
-                "checkpoint_sha256"
-            )
+        validate_checkpoint_identity(row, label=label)
         if not re.fullmatch(r"[0-9a-f]{40,64}", str(row["source_commit"])):
             raise ValueError(
                 f"{label} result for epoch {row.get('epoch')} has invalid "
@@ -448,7 +447,7 @@ def write_comparison_csv(
         coco_row = coco_by_epoch.get(int(row["epoch"]))
         if coco_row is None:
             continue
-        for field in ("checkpoint_sha256", "source_commit", "source_dirty"):
+        for field in ("checkpoint_identity", "source_commit", "source_dirty"):
             if row.get(field) != coco_row.get(field):
                 raise ValueError(
                     f"VOC and COCO result for epoch {row.get('epoch')} have "
@@ -679,11 +678,14 @@ def evaluate_checkpoints(args: argparse.Namespace) -> list[dict[str, float]]:
     )
     for index, (epoch, ckpt_path) in enumerate(ckpt_files):
         print(f"\n[{index + 1}/{len(ckpt_files)}] Evaluating Epoch {epoch}...")
-        checkpoint_digest = file_sha256(ckpt_path)
-        print(f"  Checkpoint SHA256: {checkpoint_digest}")
-        model = load_dino_backbone(ckpt_path, arch=args.arch, patch_size=args.patch_size,
-                                   checkpoint_key=args.checkpoint_key,
-                                   allow_partial=args.allow_partial_load)
+        model, checkpoint_identity = load_dino_backbone(
+            ckpt_path,
+            arch=args.arch,
+            patch_size=args.patch_size,
+            checkpoint_key=args.checkpoint_key,
+            allow_partial=args.allow_partial_load,
+            return_identity=True,
+        )
         model = model.to(device)
 
         print("  Extracting train features...")
@@ -743,7 +745,7 @@ def evaluate_checkpoints(args: argparse.Namespace) -> list[dict[str, float]]:
                     "ema_teacher" if args.checkpoint_key == "teacher" else "student"
                 ),
                 "checkpoint": str(ckpt_path),
-                "checkpoint_sha256": checkpoint_digest,
+                "checkpoint_identity": checkpoint_identity,
                 "probe_config": probe_config,
                 "dataset_identity": dataset_identity,
                 **source_state,

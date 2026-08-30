@@ -13,7 +13,6 @@
 # limitations under the License.
 import argparse
 import os
-import sys
 import datetime
 import time
 import math
@@ -35,6 +34,19 @@ import utils
 import vision_transformer as vits
 from vision_transformer import DINOHead
 from dense_diagnostics import compute_dense_diagnostics, save_attention_maps
+from clean_horizon_contract import (
+    CleanHorizonContractError,
+    build_training_contract,
+    capture_rank_rng_states,
+    accumulation_group_size,
+    get_git_state,
+    restore_rank_rng_state,
+    optimizer_steps_per_epoch,
+    should_stop_before_next_epoch,
+    validate_milestone_epochs,
+    validate_resume_checkpoint,
+    write_json_atomic,
+)
 
 torchvision_archs = sorted(name for name in torchvision_models.__dict__
     if name.islower() and not name.startswith("__")
@@ -145,10 +157,24 @@ def get_args_parser():
     # Gradient accumulation (for small-GPU training)
     parser.add_argument('--accum_steps', default=1, type=int,
         help='Gradient accumulation steps. Effective batch = batch_size_per_gpu * accum_steps.')
+    parser.add_argument('--drop_incomplete_accumulation', default=False, type=utils.bool_flag,
+        help='Drop a final partial accumulation group to keep every optimizer batch equal.')
 
     # Checkpoint management
     parser.add_argument('--keep_last_ckpts', default=0, type=int,
         help='Keep only the last N periodic checkpoints (0 = keep all).')
+    parser.add_argument('--milestone_ckpt_epochs', default=(), type=int, nargs='*',
+        help='Always save these zero-based epoch labels in addition to saveckp_freq.')
+    parser.add_argument('--strict_resume_schedule', default=False, type=utils.bool_flag,
+        help='Fail before training if resume metadata differs from this launch.')
+    parser.add_argument('--expected_world_size', default=0, type=int,
+        help='Required distributed world size when non-zero.')
+    parser.add_argument('--max_runtime_hours', default=0.0, type=float,
+        help='Session wall-clock budget; zero disables the epoch-boundary guard.')
+    parser.add_argument('--runtime_reserve_minutes', default=0.0, type=float,
+        help='Time reserved for checkpoint publication before the platform limit.')
+    parser.add_argument('--run_name', default='', type=str,
+        help='Stable experiment identifier recorded in the training contract.')
     return parser
 
 
@@ -157,6 +183,16 @@ def train_dino(args):
     utils.fix_random_seeds(args.seed)
     print("git:\n  {}\n".format(utils.get_sha()))
     print("\n".join("%s: %s" % (k, str(v)) for k, v in sorted(dict(vars(args)).items())))
+    validate_milestone_epochs(args)
+    if args.expected_world_size and utils.get_world_size() != args.expected_world_size:
+        raise CleanHorizonContractError(
+            f"Expected world size {args.expected_world_size}, got {utils.get_world_size()}"
+        )
+    source_state = get_git_state(Path(__file__).resolve().parent)
+    if args.strict_resume_schedule and source_state["source_dirty"]:
+        raise CleanHorizonContractError(
+            "Strict clean-horizon training requires a clean source checkout"
+        )
     cudnn.benchmark = True
 
     # ============ preparing data ... ============
@@ -261,7 +297,24 @@ def train_dino(args):
     # When using gradient accumulation, the effective number of optimizer steps
     # per epoch is reduced. We scale the schedules accordingly so that the
     # total learning rate / momentum trajectory stays the same.
-    effective_loader_len = len(data_loader) // args.accum_steps
+    effective_loader_len = optimizer_steps_per_epoch(
+        len(data_loader),
+        args.accum_steps,
+        drop_incomplete=args.drop_incomplete_accumulation,
+    )
+    if effective_loader_len <= 0:
+        raise CleanHorizonContractError(
+            "The data loader does not provide one optimizer step per epoch"
+        )
+    training_contract = build_training_contract(
+        args,
+        dataset_size=len(dataset),
+        class_count=len(dataset.classes),
+        batches_per_epoch=len(data_loader),
+        optimizer_steps_per_epoch=effective_loader_len,
+        world_size=utils.get_world_size(),
+        source_state=source_state,
+    )
     lr_schedule = utils.cosine_scheduler(
         args.lr * (args.batch_size_per_gpu * args.accum_steps * utils.get_world_size()) / 256.,  # linear scaling rule
         args.min_lr,
@@ -283,7 +336,19 @@ def train_dino(args):
     # ============ optionally resume training ... ============
     to_restore = {"epoch": 0}
     resume_path = args.resume_from or os.path.join(args.output_dir, "checkpoint.pth")
-    utils.restart_from_checkpoint(
+    resume_identity = None
+    if args.strict_resume_schedule:
+        if args.resume_from and not os.path.isfile(resume_path):
+            raise CleanHorizonContractError(
+                f"Explicit resume checkpoint does not exist: {resume_path}"
+            )
+        if os.path.isfile(resume_path):
+            resume_identity = validate_resume_checkpoint(
+                resume_path,
+                training_contract,
+                use_fp16=args.use_fp16,
+            )
+    restored_checkpoint = utils.restart_from_checkpoint(
         resume_path,
         run_variables=to_restore,
         student=student,
@@ -293,10 +358,22 @@ def train_dino(args):
         dino_loss=dino_loss,
     )
     start_epoch = to_restore["epoch"]
+    if args.strict_resume_schedule and resume_identity is not None:
+        if restored_checkpoint is None:
+            raise CleanHorizonContractError("Validated checkpoint was not restored")
+        if start_epoch != resume_identity["completed_epochs"]:
+            raise CleanHorizonContractError(
+                "Restored epoch does not match the validated checkpoint identity"
+            )
+        restore_rank_rng_state(restored_checkpoint["rng_states"], utils.get_rank())
+    del restored_checkpoint
 
     start_time = time.time()
+    session_epoch_durations = []
+    final_status = "complete" if start_epoch >= args.epochs else "running"
     print("Starting DINO training !")
     for epoch in range(start_epoch, args.epochs):
+        epoch_started_at = time.time()
         data_loader.sampler.set_epoch(epoch)
 
         # ============ training one epoch of DINO ... ============
@@ -328,6 +405,7 @@ def train_dino(args):
             )
 
         # ============ writing logs ... ============
+        rng_states = capture_rank_rng_states()
         save_dict = {
             'student': student.state_dict(),
             'teacher': teacher.state_dict(),
@@ -335,11 +413,15 @@ def train_dino(args):
             'epoch': epoch + 1,
             'args': args,
             'dino_loss': dino_loss.state_dict(),
+            'training_contract': training_contract,
+            'rng_states': rng_states,
         }
         if fp16_scaler is not None:
             save_dict['fp16_scaler'] = fp16_scaler.state_dict()
         utils.save_on_master(save_dict, os.path.join(args.output_dir, 'checkpoint.pth'))
-        if args.saveckp_freq and epoch % args.saveckp_freq == 0:
+        save_periodic = bool(args.saveckp_freq and epoch % args.saveckp_freq == 0)
+        save_milestone = epoch in set(args.milestone_ckpt_epochs)
+        if save_periodic or save_milestone:
             utils.save_on_master(save_dict, os.path.join(args.output_dir, f'checkpoint{epoch:04}.pth'))
 
         # ============ cleanup old checkpoints ... ============
@@ -353,9 +435,66 @@ def train_dino(args):
         if utils.is_main_process():
             with (Path(args.output_dir) / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
+        completed_epochs = epoch + 1
+        session_epoch_durations.append(time.time() - epoch_started_at)
+        elapsed_seconds = time.time() - start_time
+        mean_epoch_seconds = sum(session_epoch_durations) / len(session_epoch_durations)
+        stop_for_runtime = False
+        if utils.is_main_process():
+            stop_for_runtime = should_stop_before_next_epoch(
+                elapsed_seconds=elapsed_seconds,
+                mean_epoch_seconds=mean_epoch_seconds,
+                max_runtime_seconds=args.max_runtime_hours * 3600.0,
+                reserve_seconds=args.runtime_reserve_minutes * 60.0,
+                completed_epochs=completed_epochs,
+                target_epochs=args.epochs,
+            )
+        if dist.is_available() and dist.is_initialized():
+            stop_tensor = torch.tensor(
+                [int(stop_for_runtime)],
+                device=torch.device("cuda", args.gpu),
+                dtype=torch.int32,
+            )
+            dist.broadcast(stop_tensor, src=0)
+            stop_for_runtime = bool(stop_tensor.item())
+
+        if completed_epochs >= args.epochs:
+            final_status = "complete"
+        elif stop_for_runtime:
+            final_status = "partial_runtime_guard"
+        else:
+            final_status = "running"
+        if utils.is_main_process():
+            rolling_path = Path(args.output_dir) / "checkpoint.pth"
+            write_json_atomic(
+                Path(args.output_dir) / "clean_horizon_session_summary.json",
+                {
+                    "status": final_status,
+                    "run_name": args.run_name,
+                    "session_start_epoch": start_epoch,
+                    "completed_epochs": completed_epochs,
+                    "last_epoch_label": epoch,
+                    "target_epochs": args.epochs,
+                    "session_elapsed_seconds": elapsed_seconds,
+                    "mean_epoch_seconds": mean_epoch_seconds,
+                    "resume_checkpoint": resume_identity,
+                    "rolling_checkpoint": {
+                        "basename": rolling_path.name,
+                        "size_bytes": rolling_path.stat().st_size,
+                        "completed_epochs": completed_epochs,
+                    },
+                    "training_contract": training_contract,
+                },
+            )
+        if stop_for_runtime:
+            print(
+                "Runtime guard stopped after completed epoch "
+                f"{completed_epochs}; checkpoint and session summary are ready."
+            )
+            break
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    print('Training time {}'.format(total_time_str))
+    print('Training time {} (status={})'.format(total_time_str, final_status))
 
 
 def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loader,
@@ -364,11 +503,23 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Epoch: [{}/{}]'.format(epoch, args.epochs)
     accum_steps = args.accum_steps
+    optimizer_steps = optimizer_steps_per_epoch(
+        len(data_loader),
+        accum_steps,
+        drop_incomplete=args.drop_incomplete_accumulation,
+    )
+    usable_batches = (
+        optimizer_steps * accum_steps
+        if args.drop_incomplete_accumulation
+        else len(data_loader)
+    )
     optimizer.zero_grad()
     for it, (images, _) in enumerate(metric_logger.log_every(data_loader, 10, header)):
+        if it >= usable_batches:
+            break
         # update weight decay and learning rate according to their schedule
         # With gradient accumulation, we update LR/WD every accum_steps
-        opt_step = (len(data_loader) * epoch + it) // accum_steps
+        opt_step = optimizer_steps * epoch + it // accum_steps
         opt_step = min(opt_step, len(lr_schedule) - 1)
         for i, param_group in enumerate(optimizer.param_groups):
             param_group["lr"] = lr_schedule[opt_step]
@@ -383,12 +534,28 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
             student_output = student(images)
             loss = dino_loss(student_output, teacher_output, epoch)
 
-        if not math.isfinite(loss.item()):
-            print("Loss is {}, stopping training".format(loss.item()), force=True)
-            sys.exit(1)
+        nonfinite_loss = torch.tensor(
+            [int(not math.isfinite(loss.item()))],
+            device=torch.device("cuda", args.gpu),
+            dtype=torch.int32,
+        )
+        if dist.is_available() and dist.is_initialized():
+            dist.all_reduce(nonfinite_loss, op=dist.ReduceOp.MAX)
+        if nonfinite_loss.item():
+            raise FloatingPointError(
+                "Non-finite DINO loss at epoch {} iteration {}: {}".format(
+                    epoch, it, loss.item()
+                )
+            )
 
         # Scale loss for gradient accumulation
-        loss = loss / accum_steps
+        group_size = accumulation_group_size(
+            it,
+            len(data_loader),
+            accum_steps,
+            drop_incomplete=args.drop_incomplete_accumulation,
+        )
+        loss = loss / group_size
 
         # backward pass (accumulate gradients)
         param_norms = None
@@ -398,7 +565,8 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
             fp16_scaler.scale(loss).backward()
 
         # optimizer step only every accum_steps iterations
-        if (it + 1) % accum_steps == 0 or (it + 1) == len(data_loader):
+        if (it + 1) % accum_steps == 0 or (it + 1) == usable_batches:
+            optimizer_stepped = True
             if fp16_scaler is None:
                 if args.clip_grad:
                     param_norms = utils.clip_gradients(student, args.clip_grad)
@@ -411,20 +579,35 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                     param_norms = utils.clip_gradients(student, args.clip_grad)
                 utils.cancel_gradients_last_layer(epoch, student,
                                                   args.freeze_last_layer)
+                scale_before = fp16_scaler.get_scale()
                 fp16_scaler.step(optimizer)
                 fp16_scaler.update()
+                optimizer_stepped = fp16_scaler.get_scale() >= scale_before
+                overflow = torch.tensor(
+                    [int(not optimizer_stepped)],
+                    device=torch.device("cuda", args.gpu),
+                    dtype=torch.int32,
+                )
+                if dist.is_available() and dist.is_initialized():
+                    dist.all_reduce(overflow, op=dist.ReduceOp.MAX)
+                if overflow.item():
+                    raise FloatingPointError(
+                        "AMP overflow skipped an optimizer step at epoch "
+                        f"{epoch} iteration {it}; clean-horizon session is invalid"
+                    )
             optimizer.zero_grad()
 
             # EMA update for the teacher (only at optimizer steps)
-            with torch.no_grad():
-                m_step = min(opt_step, len(momentum_schedule) - 1)
-                m = momentum_schedule[m_step]
-                for param_q, param_k in zip(student.module.parameters(), teacher_without_ddp.parameters()):
-                    param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
+            if optimizer_stepped:
+                with torch.no_grad():
+                    m_step = min(opt_step, len(momentum_schedule) - 1)
+                    m = momentum_schedule[m_step]
+                    for param_q, param_k in zip(student.module.parameters(), teacher_without_ddp.parameters()):
+                        param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
 
         # logging
         torch.cuda.synchronize()
-        metric_logger.update(loss=loss.item() * accum_steps)  # log un-scaled loss
+        metric_logger.update(loss=loss.item() * group_size)  # log un-scaled loss
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(wd=optimizer.param_groups[0]["weight_decay"])
     # gather the stats from all processes

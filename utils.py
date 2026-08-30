@@ -155,7 +155,7 @@ def restart_from_checkpoint(ckp_path, run_variables=None, **kwargs):
     Re-start from checkpoint
     """
     if not os.path.isfile(ckp_path):
-        return
+        return None
     print("Found checkpoint at {}".format(ckp_path))
 
     # open checkpoint file
@@ -191,6 +191,7 @@ def restart_from_checkpoint(ckp_path, run_variables=None, **kwargs):
         for var_name in run_variables:
             if var_name in checkpoint:
                 run_variables[var_name] = checkpoint[var_name]
+    return checkpoint
 
 
 def cosine_scheduler(base_value, final_value, epochs, niter_per_ep, warmup_epochs=0, start_warmup_value=0):
