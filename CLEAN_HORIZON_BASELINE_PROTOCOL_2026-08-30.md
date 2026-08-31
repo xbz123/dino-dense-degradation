@@ -186,12 +186,38 @@ Session 1 V2 was then submitted through the same Notebook after the amended
 protocol and implementation were published:
 
 - Kaggle Version: 21;
+- script version: `346212825`;
 - version name: `clean-horizon-seed0-session1-v2`;
 - accelerator: GPU T4 x2;
 - input: ImageNet100 only;
 - resume mode: fresh epoch 0;
 - source checkout: `4c16679e915ca1e84842d652c911166f164b5183`;
-- launch status at the initial check: running, with no immediate failure.
+- terminal Kaggle status: successful;
+- session status: `partial_runtime_guard`;
+- completed epochs: `18` (last zero-based label `17`);
+- rolling checkpoint: `checkpoint.pth`, `704834924` bytes, internal completed
+  epoch `18`;
+- optimizer attempts/applied: `8892 / 8891`, exactly one recovered AMP
+  overflow and zero consecutive overflows at the boundary;
+- recovered event: epoch `17`, iteration `793`, optimizer slot `8794`, scaler
+  `1048576 -> 524288`.
 
-This is an execution record, not an accepted training result. Acceptance waits
-for the published V2 session summary and rolling checkpoint.
+The published summary, event record, file list, source identity, contract
+version, and optimizer coordinate are consistent. The rolling checkpoint is
+the only V2 parent selected for the next session; strict resume validation must
+load and validate it before the first new model update.
+
+Session 2 V2 was submitted through the same Notebook with exactly one source
+cell change: `CLEAN_HORIZON_RESUME_FROM` now names the Version-21 rolling
+checkpoint mounted from the preceding Notebook output.
+
+- Kaggle Version: 22;
+- version name: `clean-horizon-seed0-session2-v2`;
+- accelerator: GPU T4 x2;
+- inputs: ImageNet100 and Version-21 `dino train` output;
+- resume checkpoint:
+  `/kaggle/input/notebooks/bingzhouxie/dino-train/dino_clean_horizon_seed0/checkpoint.pth`;
+- launch status at the initial check: running.
+
+Neither session is a downstream scientific result. The clean-horizon gate
+remains pending until label `318` and the registered probes are complete.

@@ -114,12 +114,21 @@ checkpoint cannot resume V2. V2 retains every scientific hyperparameter but
 recovers one or two consecutive scaler overflows while recording skipped and
 applied updates; three consecutive overflows remain terminal.
 
-Kaggle Version 21 (`clean-horizon-seed0-session1-v2`) has now started from
-epoch 0 in the same Notebook. The submitted cells pin source
-`4c16679e915ca1e84842d652c911166f164b5183`, keep resume empty, attach only
-ImageNet100, and use GPU T4 x2. The initial activity status is running with no
-immediate failure. This is not accepted evidence until its V2 summary and
-rolling checkpoint pass independent inspection.
+Kaggle Version 21 (`346212825`,
+`clean-horizon-seed0-session1-v2`) completed successfully at the runtime guard.
+Its structured summary reports `partial_runtime_guard`, 18 completed epochs
+(last label 17), a 704834924-byte rolling checkpoint, 8892 scheduled optimizer
+attempts, 8891 applied updates, one recovered overflow, and zero consecutive
+overflows at the boundary. The event record identifies epoch 17, iteration 793,
+with scaler reduction `1048576 -> 524288`. These are engineering continuity
+artifacts, not downstream evidence.
+
+Kaggle Version 22 (`clean-horizon-seed0-session2-v2`) is now running on T4 x2.
+The Notebook source is unchanged except that `CLEAN_HORIZON_RESUME_FROM` points
+to the mounted Version-21 rolling checkpoint; the only added input is the
+Version-21 Notebook output. Strict V2 validation must accept the checkpoint,
+contract, source, dataset, RNG, AMP, and optimizer coordinates before any new
+model update.
 
 The repository also includes a Colab notebook for the current Drive-based
 evaluation workflow:

@@ -168,6 +168,8 @@ reaches a scientific verdict.
   finite-loss `GradScaler` skip; it is not a scientific result or V2 parent.
 - [x] Start the registered V2 seed-0 baseline from epoch 0 as Kaggle Version
   21; no historical or V1 checkpoint is its parent.
+- [x] Accept the Version-21 runtime boundary at 18 completed epochs and submit
+  Version 22 from its rolling checkpoint with only the resume path changed.
 - [ ] Preserve:
 
   ```text
