@@ -114,6 +114,13 @@ checkpoint cannot resume V2. V2 retains every scientific hyperparameter but
 recovers one or two consecutive scaler overflows while recording skipped and
 applied updates; three consecutive overflows remain terminal.
 
+Kaggle Version 21 (`clean-horizon-seed0-session1-v2`) has now started from
+epoch 0 in the same Notebook. The submitted cells pin source
+`4c16679e915ca1e84842d652c911166f164b5183`, keep resume empty, attach only
+ImageNet100, and use GPU T4 x2. The initial activity status is running with no
+immediate failure. This is not accepted evidence until its V2 summary and
+rolling checkpoint pass independent inspection.
+
 The repository also includes a Colab notebook for the current Drive-based
 evaluation workflow:
 

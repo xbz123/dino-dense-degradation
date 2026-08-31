@@ -166,8 +166,8 @@ reaches a scientific verdict.
 
 - [x] Record Kaggle Version 20 as an excluded V1 engineering failure after one
   finite-loss `GradScaler` skip; it is not a scientific result or V2 parent.
-- [ ] Start the registered V2 seed-0 baseline from epoch 0; no historical or V1
-  checkpoint may be its parent.
+- [x] Start the registered V2 seed-0 baseline from epoch 0 as Kaggle Version
+  21; no historical or V1 checkpoint is its parent.
 - [ ] Preserve:
 
   ```text

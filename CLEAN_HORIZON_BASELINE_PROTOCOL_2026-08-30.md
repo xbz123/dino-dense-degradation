@@ -181,3 +181,17 @@ Notebook `bingzhouxie/dino-train`:
 The failure occurred before any registered endpoint and contributes no
 scientific evidence. Session 1 V2 must restart from epoch 0 after this amended
 protocol and its frozen implementation are committed and published.
+
+Session 1 V2 was then submitted through the same Notebook after the amended
+protocol and implementation were published:
+
+- Kaggle Version: 21;
+- version name: `clean-horizon-seed0-session1-v2`;
+- accelerator: GPU T4 x2;
+- input: ImageNet100 only;
+- resume mode: fresh epoch 0;
+- source checkout: `4c16679e915ca1e84842d652c911166f164b5183`;
+- launch status at the initial check: running, with no immediate failure.
+
+This is an execution record, not an accepted training result. Acceptance waits
+for the published V2 session summary and rolling checkpoint.
