@@ -38,7 +38,7 @@
 !rm -rf /kaggle/working/dino
 !git clone https://github.com/xbz123/dino-dense-degradation.git /kaggle/working/dino
 %cd /kaggle/working/dino
-!git checkout --detach 7404e7fcddaa3702574697aa4fa7aa2bb3d1e8b3
+!git checkout --detach 4c16679e915ca1e84842d652c911166f164b5183
 ```
 
 > ⚠️ 必须先 `%cd /kaggle/working`，否则删除 dino 文件夹后 shell 会找不到当前目录而报错。
@@ -52,7 +52,7 @@
 !python -m py_compile main_dino.py utils.py clean_horizon_contract.py
 ```
 
-HEAD 必须精确输出 `7404e7fcddaa3702574697aa4fa7aa2bb3d1e8b3`，且
+HEAD 必须精确输出 `4c16679e915ca1e84842d652c911166f164b5183`，且
 `git status --porcelain` 必须为空。Notebook 中不得临时改源码。
 
 ### Cell 3：设置断点续训路径

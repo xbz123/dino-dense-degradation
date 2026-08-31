@@ -40,7 +40,7 @@ workflow expects historical checkpoints every 10 epochs and keeps them all:
 The commands below are historical exploratory examples. They are not the
 current registered clean-horizon experiment. Formal continuation now uses the
 [clean-horizon protocol](CLEAN_HORIZON_BASELINE_PROTOCOL_2026-08-30.md) and
-[Kaggle guide](KAGGLE_GUIDE.md), pinned to source `7404e7f`.
+[Kaggle guide](KAGGLE_GUIDE.md), pinned to source `4c16679`.
 
 ### 1. Setup
 ```python

@@ -18,7 +18,7 @@ repository or external experiment outputs are confirmed.
 - [ ] Run COCO-Stuff only after a clean-horizon VOC gate reaches a scientific
   verdict; the current `stitched` audit blocks this step.
 - [x] Freeze and implement the clean, matched, single-horizon baseline
-  reproduction at source `7404e7f`.
+  reproduction V2 at source `4c16679`; V1 was an excluded engineering failure.
 - [ ] Run the clean-horizon baseline to label 318 and independently accept all
   session checkpoints and summaries.
 - [ ] Freeze the first late-stage C0/C1 fork, endpoint, equivalence margin,
@@ -164,8 +164,10 @@ reaches a scientific verdict.
 
 ## Priority 4: Clean Single-Horizon Training
 
-- [x] Start the registered seed-0 baseline from epoch 0 as Kaggle Version 20;
-  no historical stitched checkpoint is its parent.
+- [x] Record Kaggle Version 20 as an excluded V1 engineering failure after one
+  finite-loss `GradScaler` skip; it is not a scientific result or V2 parent.
+- [ ] Start the registered V2 seed-0 baseline from epoch 0; no historical or V1
+  checkpoint may be its parent.
 - [ ] Preserve:
 
   ```text

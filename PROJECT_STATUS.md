@@ -98,17 +98,21 @@ metric, representation, probe, and dataset identity checks. Because the
 schedule audit is `stitched`, this is retained as stitched-run exploratory
 characterization and is not a clean-horizon SDD verdict.
 
-The clean single-horizon baseline is now registered before training at source
-`7404e7fcddaa3702574697aa4fa7aa2bb3d1e8b3`. It fixes one 319-completed-epoch
+The clean single-horizon baseline V2 is registered before V2 training at source
+`4c16679e915ca1e84842d652c911166f164b5183`. It fixes one 319-completed-epoch
 schedule, backbone seed 0, labels `180 / 250 / 318`, T4 x2, effective batch
-256, and a fail-closed cross-session resume contract with per-rank RNG state.
-No clean-horizon output has been accepted yet.
+256, and a fail-closed cross-session resume contract with per-rank RNG state,
+dynamic-loss-scaling state, and attempted/applied optimizer-step coordinates.
+No V2 clean-horizon output has been accepted yet.
 
 Kaggle Version 20 (`346119135`,
-`clean-horizon-seed0-session1-v1`) has started from epoch 0 on T4 x2 with only
-ImageNet100 attached. Initial logs confirm the pinned source, two GPUs, seed 0,
-100-class layout, and frozen 319-completed-epoch horizon. The run is still in
-progress and is not accepted evidence.
+`clean-horizon-seed0-session1-v1`) started correctly but terminated at epoch
+17, iteration 793 when one finite-loss accumulation group triggered a standard
+`GradScaler` optimizer-step skip. V1 had registered every skip as terminal.
+This is an excluded engineering failure, not scientific evidence, and its
+checkpoint cannot resume V2. V2 retains every scientific hyperparameter but
+recovers one or two consecutive scaler overflows while recording skipped and
+applied updates; three consecutive overflows remain terminal.
 
 The repository also includes a Colab notebook for the current Drive-based
 evaluation workflow:

@@ -50,7 +50,7 @@ Complete these steps before implementing a late-stage mitigation:
    characterization rather than selecting a post-hoc best checkpoint.
 5. Do not run the conditional COCO-Stuff evaluator under P0 `stitched`.
 6. Run the separately registered clean fixed-horizon phenomenon reproduction
-   at source `7404e7fcddaa3702574697aa4fa7aa2bb3d1e8b3`. Freeze an intervention
+   V2 at source `4c16679e915ca1e84842d652c911166f164b5183`. Freeze an intervention
    fork only after that clean-horizon gate passes.
 
 If the clean-horizon gate later passes, the first late-stage experiment uses
@@ -232,7 +232,7 @@ run later as exploratory context, but it cannot replace the registered
 ### Phase 5: Clean Single-Horizon Training
 
 Run the registered baseline from epoch 0. Do not resume from the historical
-stitched checkpoints. Every Kaggle session checks out source `7404e7f` and
+stitched checkpoints. Every Kaggle session checks out source `4c16679` and
 uses `run_clean_horizon_kaggle.sh` with the same 319-completed-epoch contract.
 
 Training constraints:

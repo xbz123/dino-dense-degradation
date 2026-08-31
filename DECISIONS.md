@@ -210,7 +210,7 @@ Rationale:
 ### Decision: Run the clean baseline as one 319-completed-epoch contract
 
 The clean baseline uses source
-`7404e7fcddaa3702574697aa4fa7aa2bb3d1e8b3`, Kaggle T4 x2, backbone seed 0,
+`4c16679e915ca1e84842d652c911166f164b5183`, Kaggle T4 x2, backbone seed 0,
 and one target of 319 completed epochs. Experiment labels remain zero-based,
 so formal labels `180 / 250 / 318` correspond to internal completed epochs
 `181 / 251 / 319`.
@@ -218,10 +218,19 @@ so formal labels `180 / 250 / 318` correspond to internal completed epochs
 Every session uses the same training contract and restores model, optimizer,
 scaler, DINO center, and per-rank RNG state. The ImageNet-100 loader exposes
 989 micro-batches per epoch; the last incomplete accumulation group is
-discarded so all 494 optimizer steps use effective batch 256. Any skipped AMP
-step, non-finite loss, contract mismatch, or incomplete checkpoint invalidates
-the session. The full gate is frozen in
+discarded so all 494 scheduled optimizer-step attempts use effective batch 256.
+An isolated dynamic-loss-scaling overflow consumes its schedule slot, skips the
+student update and teacher EMA, and is fully recorded; the batch-tied DINO
+center update remains. Three consecutive overflows, rank-inconsistent overflow
+decisions, non-finite loss, contract mismatch, or incomplete checkpoint
+invalidate the session. Attempted and applied update coordinates are persisted
+and checked at resume. The full gate is frozen in
 `CLEAN_HORIZON_BASELINE_PROTOCOL_2026-08-30.md`.
+
+V1 source `7404e7fcddaa3702574697aa4fa7aa2bb3d1e8b3` treated any
+`GradScaler` skip as terminal and failed on one finite-loss overflow at epoch
+17, iteration 793. That engineering failure is excluded and cannot seed V2;
+V2 restarts from epoch 0 with all scientific hyperparameters unchanged.
 
 ### Decision: DSE and patch diagnostics are required companion evidence
 

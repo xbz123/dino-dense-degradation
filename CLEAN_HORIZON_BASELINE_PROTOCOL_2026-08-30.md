@@ -1,11 +1,19 @@
 # Clean Single-Horizon Baseline Protocol
 
-Status: `registered_before_first_training_output`
+Status: `v2_registered_before_first_v2_training_output`
 
 Registration date: 2026-08-30
 
+V2 amendment date: 2026-08-31
+
 Frozen training implementation:
-`7404e7fcddaa3702574697aa4fa7aa2bb3d1e8b3`
+`4c16679e915ca1e84842d652c911166f164b5183`
+
+V2 supersedes V1 only for dynamic-loss-scaling recovery. V1 failed before a
+complete epoch-17 checkpoint when one finite-loss accumulation group triggered
+a standard `GradScaler` optimizer-step skip. V1 had predeclared every such skip
+terminal, so that run is excluded and cannot be resumed. No downstream output
+was opened before this amendment.
 
 ## Objective And Evidence Level
 
@@ -36,8 +44,15 @@ downstream endpoint.
 - per-GPU batch `64`, accumulation `2`, effective batch `256`;
 - the raw loader has `989` micro-batches per epoch in the current dataset;
   the final incomplete accumulation group is discarded, so every epoch has
-  exactly `988` used micro-batches and `494` optimizer steps;
-- local crops `4`, `norm_last_layer=false`, FP16 enabled;
+  exactly `988` used micro-batches and `494` scheduled optimizer-step attempts;
+- local crops `4`, `norm_last_layer=false`, FP16 enabled with dynamic loss
+  scaling;
+- a recovered AMP overflow consumes its scheduled slot, skips the student
+  optimizer update and corresponding teacher EMA update, and is recorded
+  separately from applied updates. The DINO center remains batch-tied and is
+  not rolled back;
+- one or two consecutive AMP overflows are recoverable. Three consecutive
+  overflows terminate and invalidate the session;
 - periodic checkpoints every `10` zero-based labels, plus forced labels
   `180 / 250 / 318`;
 - diagnostics every `5` labels and attention exports every `25` labels.
@@ -54,14 +69,17 @@ Each checkpoint stores:
 
 - the complete frozen training contract;
 - model, teacher, optimizer, DINO center, and FP16 scaler state;
+- AMP total/consecutive overflow counters plus scheduled-attempt and applied-
+  update counters;
 - internal completed epoch;
 - one Python, NumPy, CPU torch, and CUDA RNG state per DDP rank.
 
 Before model updates, a resumed session checks source commit and clean state,
 training arguments, dataset size and class count, world size, loader and
-optimizer steps per epoch, checkpoint coordinate, required state keys, and RNG
-state count. Any mismatch fails before training. The runtime guard exits only
-after an epoch, rolling checkpoint, log row, and session summary are complete.
+optimizer steps per epoch, checkpoint and optimizer-step coordinates, required
+state keys, and RNG state count. Any mismatch fails before training. The
+runtime guard exits only after an epoch, rolling checkpoint, log row, and
+session summary are complete.
 
 The registered session budget is `11.5` hours with `45` minutes reserved. A
 session may stop earlier if the observed mean epoch duration indicates that
@@ -77,7 +95,9 @@ The current session is invalid and must not be resumed when any of these occur:
   mismatch;
 - missing or unloadable model, optimizer, scaler, center, or RNG state;
 - non-finite loss;
-- an AMP overflow that skips an optimizer step;
+- a rank-inconsistent AMP overflow decision;
+- three consecutive AMP overflows;
+- missing, malformed, or coordinate-inconsistent AMP/optimizer-step state;
 - OOM, data-layout failure, checkpoint write failure, or absent session
   summary.
 
@@ -153,7 +173,11 @@ Notebook `bingzhouxie/dino-train`:
 - input: ImageNet100 only;
 - resume mode: fresh epoch 0;
 - source checkout: `7404e7fcddaa3702574697aa4fa7aa2bb3d1e8b3`;
-- launch status at the initial check: running, with no startup error.
+- terminal status: excluded engineering failure;
+- failure: one `GradScaler` optimizer-step skip at epoch `17`, iteration `793`;
+- accepted completed epoch/checkpoint: none for the V2 contract;
+- resume policy: V1 checkpoints are rejected by V2 and must not be used.
 
-This is an execution record, not an accepted training result. Acceptance waits
-for the published session summary and rolling checkpoint.
+The failure occurred before any registered endpoint and contributes no
+scientific evidence. Session 1 V2 must restart from epoch 0 after this amended
+protocol and its frozen implementation are committed and published.
