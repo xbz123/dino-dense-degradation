@@ -11,6 +11,8 @@ from clean_horizon_contract import (
     build_training_contract,
     accumulation_group_size,
     capture_rank_rng_states,
+    create_amp_overflow_state,
+    record_amp_optimizer_attempt,
     restore_rank_rng_state,
     optimizer_steps_per_epoch,
     should_stop_before_next_epoch,
@@ -34,6 +36,7 @@ def make_args(**overrides):
         "teacher_temp": 0.07,
         "warmup_teacher_temp_epochs": 30,
         "use_fp16": True,
+        "amp_max_consecutive_overflows": 3,
         "weight_decay": 0.04,
         "weight_decay_end": 0.4,
         "clip_grad": 3.0,
@@ -58,7 +61,7 @@ def make_args(**overrides):
         "attn_viz_every": 25,
         "diag_num_batches": 50,
         "milestone_ckpt_epochs": (180, 250, 318),
-        "run_name": "dino_v3_clean_horizon_seed0_v1",
+        "run_name": "dino_v3_clean_horizon_seed0_v2",
     }
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -78,6 +81,11 @@ def make_contract(args=None):
 
 def save_resume(path, contract, *, completed_epochs=181, rng_count=2, args=None):
     rng_state = capture_rank_rng_states()[0]
+    amp_overflow_state = create_amp_overflow_state(3)
+    amp_overflow_state.update({
+        "optimizer_step_attempts": completed_epochs * 494,
+        "optimizer_steps_applied": completed_epochs * 494,
+    })
     torch.save(
         {
             "student": {},
@@ -89,6 +97,7 @@ def save_resume(path, contract, *, completed_epochs=181, rng_count=2, args=None)
             "fp16_scaler": {},
             "training_contract": contract,
             "rng_states": [rng_state for _ in range(rng_count)],
+            "amp_overflow_state": amp_overflow_state,
         },
         path,
     )
@@ -114,6 +123,7 @@ def test_resume_accepts_exact_contract_and_coordinate(tmp_path):
     assert identity["completed_epochs"] == 181
     assert identity["filename_epoch"] == 180
     assert identity["size_bytes"] > 0
+    assert identity["amp_overflow_state"]["total_overflows"] == 0
 
 
 def test_resume_rejects_schedule_contract_change(tmp_path):
@@ -160,6 +170,61 @@ def test_resume_rejects_incomplete_rng_state(tmp_path):
         validate_resume_checkpoint(checkpoint, make_contract(), use_fp16=True)
 
 
+def test_resume_rejects_missing_amp_overflow_state(tmp_path):
+    checkpoint = tmp_path / "checkpoint0180.pth"
+    save_resume(checkpoint, make_contract())
+    payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    del payload["amp_overflow_state"]
+    torch.save(payload, checkpoint)
+
+    with pytest.raises(CleanHorizonContractError, match="missing required state"):
+        validate_resume_checkpoint(checkpoint, make_contract(), use_fp16=True)
+
+
+def test_resume_rejects_amp_overflow_state_at_kill_limit(tmp_path):
+    checkpoint = tmp_path / "checkpoint0180.pth"
+    save_resume(checkpoint, make_contract())
+    payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    payload["amp_overflow_state"].update({
+        "total_overflows": 3,
+        "consecutive_overflows": 3,
+        "optimizer_steps_applied": 181 * 494 - 3,
+    })
+    torch.save(payload, checkpoint)
+
+    with pytest.raises(CleanHorizonContractError, match="reached the kill limit"):
+        validate_resume_checkpoint(checkpoint, make_contract(), use_fp16=True)
+
+
+def test_resume_accepts_recovered_overflow_and_preserves_step_coordinate(tmp_path):
+    checkpoint = tmp_path / "checkpoint0180.pth"
+    save_resume(checkpoint, make_contract())
+    payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    payload["amp_overflow_state"].update({
+        "total_overflows": 1,
+        "consecutive_overflows": 0,
+        "optimizer_steps_applied": 181 * 494 - 1,
+    })
+    torch.save(payload, checkpoint)
+
+    identity = validate_resume_checkpoint(checkpoint, make_contract(), use_fp16=True)
+
+    assert identity["amp_overflow_state"]["optimizer_step_attempts"] == 181 * 494
+    assert identity["amp_overflow_state"]["optimizer_steps_applied"] == 181 * 494 - 1
+
+
+def test_resume_rejects_optimizer_step_coordinate_mismatch(tmp_path):
+    checkpoint = tmp_path / "checkpoint0180.pth"
+    save_resume(checkpoint, make_contract())
+    payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    payload["amp_overflow_state"]["optimizer_step_attempts"] -= 1
+    payload["amp_overflow_state"]["optimizer_steps_applied"] -= 1
+    torch.save(payload, checkpoint)
+
+    with pytest.raises(CleanHorizonContractError, match="coordinate differs"):
+        validate_resume_checkpoint(checkpoint, make_contract(), use_fp16=True)
+
+
 def test_final_label_318_matches_319_completed_epochs(tmp_path):
     checkpoint = tmp_path / "checkpoint0318.pth"
     save_resume(checkpoint, make_contract(), completed_epochs=319)
@@ -184,6 +249,31 @@ def test_rng_state_round_trip_is_replayable():
     actual = (random.random(), float(np.random.rand()), float(torch.rand(1)))
 
     assert actual == pytest.approx(expected)
+
+
+def test_isolated_amp_overflow_is_recoverable_and_success_resets_consecutive():
+    state = create_amp_overflow_state(3)
+
+    assert not record_amp_optimizer_attempt(state, overflowed=True)
+    assert state["total_overflows"] == 1
+    assert state["consecutive_overflows"] == 1
+    assert state["optimizer_step_attempts"] == 1
+    assert state["optimizer_steps_applied"] == 0
+    assert not record_amp_optimizer_attempt(state, overflowed=False)
+    assert state["total_overflows"] == 1
+    assert state["consecutive_overflows"] == 0
+    assert state["optimizer_step_attempts"] == 2
+    assert state["optimizer_steps_applied"] == 1
+
+
+def test_amp_overflow_limit_triggers_on_third_consecutive_skip():
+    state = create_amp_overflow_state(3)
+
+    assert not record_amp_optimizer_attempt(state, overflowed=True)
+    assert not record_amp_optimizer_attempt(state, overflowed=True)
+    assert record_amp_optimizer_attempt(state, overflowed=True)
+    assert state["total_overflows"] == 3
+    assert state["consecutive_overflows"] == 3
 
 
 def test_runtime_guard_reserves_one_estimated_epoch():
@@ -229,6 +319,7 @@ def test_kaggle_launcher_freezes_clean_horizon_contract():
     assert "--epochs 319" in source
     assert "--milestone_ckpt_epochs 180 250 318" in source
     assert "--strict_resume_schedule true" in source
+    assert "--amp_max_consecutive_overflows 3" in source
     assert "--drop_incomplete_accumulation true" in source
     assert "--expected_world_size 2" in source
     assert "--seed 0" in source
@@ -236,10 +327,11 @@ def test_kaggle_launcher_freezes_clean_horizon_contract():
     assert "--keep_last_ckpts 0" in source
 
 
-def test_training_loop_fails_closed_on_distributed_nonfinite_or_amp_skip():
+def test_training_loop_fails_closed_on_nonfinite_or_repeated_amp_skip():
     source = (ROOT / "main_dino.py").read_text(encoding="utf-8")
 
     assert "dist.all_reduce(nonfinite_loss, op=dist.ReduceOp.MAX)" in source
-    assert "AMP overflow skipped an optimizer step" in source
+    assert "AMP overflow reached the consecutive skip limit" in source
+    assert "dist.all_reduce(overflow_count, op=dist.ReduceOp.SUM)" in source
     assert "if optimizer_stepped:" in source
     assert "optimizer_steps * epoch + it // accum_steps" in source

@@ -39,10 +39,13 @@ from clean_horizon_contract import (
     build_training_contract,
     capture_rank_rng_states,
     accumulation_group_size,
+    create_amp_overflow_state,
     get_git_state,
+    record_amp_optimizer_attempt,
     restore_rank_rng_state,
     optimizer_steps_per_epoch,
     should_stop_before_next_epoch,
+    validate_amp_overflow_state,
     validate_milestone_epochs,
     validate_resume_checkpoint,
     write_json_atomic,
@@ -94,6 +97,8 @@ def get_args_parser():
         to use half precision for training. Improves training time and memory requirements,
         but can provoke instability and slight decay of performance. We recommend disabling
         mixed precision if the loss is unstable, if reducing the patch size or if training with bigger ViTs.""")
+    parser.add_argument('--amp_max_consecutive_overflows', type=int, default=3,
+        help='Abort after this many consecutive GradScaler optimizer-step skips.')
     parser.add_argument('--weight_decay', type=float, default=0.04, help="""Initial value of the
         weight decay. With ViT, a smaller value at the beginning of training works well.""")
     parser.add_argument('--weight_decay_end', type=float, default=0.4, help="""Final value of the
@@ -292,6 +297,9 @@ def train_dino(args):
     fp16_scaler = None
     if args.use_fp16:
         fp16_scaler = torch.cuda.amp.GradScaler()
+    amp_overflow_state = create_amp_overflow_state(
+        args.amp_max_consecutive_overflows
+    )
 
     # ============ init schedulers ... ============
     # When using gradient accumulation, the effective number of optimizer steps
@@ -366,6 +374,11 @@ def train_dino(args):
                 "Restored epoch does not match the validated checkpoint identity"
             )
         restore_rank_rng_state(restored_checkpoint["rng_states"], utils.get_rank())
+    if restored_checkpoint is not None and "amp_overflow_state" in restored_checkpoint:
+        amp_overflow_state = validate_amp_overflow_state(
+            restored_checkpoint["amp_overflow_state"],
+            expected_max_consecutive_overflows=args.amp_max_consecutive_overflows,
+        )
     del restored_checkpoint
 
     start_time = time.time()
@@ -379,7 +392,7 @@ def train_dino(args):
         # ============ training one epoch of DINO ... ============
         train_stats = train_one_epoch(student, teacher, teacher_without_ddp, dino_loss,
             data_loader, optimizer, lr_schedule, wd_schedule, momentum_schedule,
-            epoch, fp16_scaler, args)
+            epoch, fp16_scaler, amp_overflow_state, args)
 
         # ============ dense degradation diagnostics ... ============
         if utils.is_main_process() and args.val_data_path and epoch % args.diag_every == 0:
@@ -415,6 +428,7 @@ def train_dino(args):
             'dino_loss': dino_loss.state_dict(),
             'training_contract': training_contract,
             'rng_states': rng_states,
+            'amp_overflow_state': dict(amp_overflow_state),
         }
         if fp16_scaler is not None:
             save_dict['fp16_scaler'] = fp16_scaler.state_dict()
@@ -484,6 +498,12 @@ def train_dino(args):
                         "completed_epochs": completed_epochs,
                     },
                     "training_contract": training_contract,
+                    "amp_overflow_state": dict(amp_overflow_state),
+                    "amp_scale": (
+                        float(fp16_scaler.get_scale())
+                        if fp16_scaler is not None
+                        else None
+                    ),
                 },
             )
         if stop_for_runtime:
@@ -497,9 +517,21 @@ def train_dino(args):
     print('Training time {} (status={})'.format(total_time_str, final_status))
 
 
+def append_clean_horizon_event(args, payload):
+    """Append one rank-zero event so recoverable skips remain auditable."""
+    if not args.strict_resume_schedule or not utils.is_main_process():
+        return
+    event = {
+        "run_name": args.run_name,
+        **payload,
+    }
+    with (Path(args.output_dir) / "clean_horizon_events.jsonl").open("a") as handle:
+        handle.write(json.dumps(event, sort_keys=True) + "\n")
+
+
 def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loader,
                     optimizer, lr_schedule, wd_schedule, momentum_schedule, epoch,
-                    fp16_scaler, args):
+                    fp16_scaler, amp_overflow_state, args):
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Epoch: [{}/{}]'.format(epoch, args.epochs)
     accum_steps = args.accum_steps
@@ -513,6 +545,9 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
         if args.drop_incomplete_accumulation
         else len(data_loader)
     )
+    epoch_overflows_before = amp_overflow_state["total_overflows"]
+    epoch_attempts_before = amp_overflow_state["optimizer_step_attempts"]
+    epoch_applied_before = amp_overflow_state["optimizer_steps_applied"]
     optimizer.zero_grad()
     for it, (images, _) in enumerate(metric_logger.log_every(data_loader, 10, header)):
         if it >= usable_batches:
@@ -542,6 +577,12 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
         if dist.is_available() and dist.is_initialized():
             dist.all_reduce(nonfinite_loss, op=dist.ReduceOp.MAX)
         if nonfinite_loss.item():
+            append_clean_horizon_event(args, {
+                "event": "nonfinite_loss",
+                "epoch": epoch,
+                "iteration": it,
+                "loss": float(loss.item()),
+            })
             raise FloatingPointError(
                 "Non-finite DINO loss at epoch {} iteration {}: {}".format(
                     epoch, it, loss.item()
@@ -573,6 +614,10 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                 utils.cancel_gradients_last_layer(epoch, student,
                                                   args.freeze_last_layer)
                 optimizer.step()
+                record_amp_optimizer_attempt(
+                    amp_overflow_state,
+                    overflowed=False,
+                )
             else:
                 if args.clip_grad:
                     fp16_scaler.unscale_(optimizer)
@@ -583,17 +628,54 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                 fp16_scaler.step(optimizer)
                 fp16_scaler.update()
                 optimizer_stepped = fp16_scaler.get_scale() >= scale_before
-                overflow = torch.tensor(
+                overflow_count = torch.tensor(
                     [int(not optimizer_stepped)],
                     device=torch.device("cuda", args.gpu),
                     dtype=torch.int32,
                 )
                 if dist.is_available() and dist.is_initialized():
-                    dist.all_reduce(overflow, op=dist.ReduceOp.MAX)
-                if overflow.item():
+                    dist.all_reduce(overflow_count, op=dist.ReduceOp.SUM)
+                overflow_ranks = int(overflow_count.item())
+                world_size = utils.get_world_size()
+                if overflow_ranks not in (0, world_size):
+                    append_clean_horizon_event(args, {
+                        "event": "amp_overflow_rank_mismatch",
+                        "epoch": epoch,
+                        "iteration": it,
+                        "optimizer_step_slot": opt_step,
+                        "overflow_ranks": overflow_ranks,
+                        "world_size": world_size,
+                    })
                     raise FloatingPointError(
-                        "AMP overflow skipped an optimizer step at epoch "
-                        f"{epoch} iteration {it}; clean-horizon session is invalid"
+                        "AMP overflow decision differed across ranks at epoch "
+                        f"{epoch} iteration {it}: {overflow_ranks}/{world_size} ranks skipped"
+                    )
+                optimizer_stepped = overflow_ranks == 0
+                limit_reached = record_amp_optimizer_attempt(
+                    amp_overflow_state,
+                    overflowed=not optimizer_stepped,
+                )
+                if not optimizer_stepped:
+                    append_clean_horizon_event(args, {
+                        "event": (
+                            "amp_overflow_kill_limit"
+                            if limit_reached
+                            else "amp_overflow_recovered"
+                        ),
+                        "epoch": epoch,
+                        "iteration": it,
+                        "optimizer_step_slot": opt_step,
+                        "scale_before": float(scale_before),
+                        "scale_after": float(fp16_scaler.get_scale()),
+                        "amp_overflow_state": dict(amp_overflow_state),
+                    })
+                if limit_reached:
+                    raise FloatingPointError(
+                        "AMP overflow reached the consecutive skip limit at epoch "
+                        f"{epoch} iteration {it}: "
+                        f"{amp_overflow_state['consecutive_overflows']}/"
+                        f"{amp_overflow_state['max_consecutive_overflows']} consecutive, "
+                        f"{amp_overflow_state['total_overflows']} total"
                     )
             optimizer.zero_grad()
 
@@ -613,7 +695,31 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    epoch_overflow_count = (
+        amp_overflow_state["total_overflows"] - epoch_overflows_before
+    )
+    epoch_step_attempts = (
+        amp_overflow_state["optimizer_step_attempts"] - epoch_attempts_before
+    )
+    epoch_steps_applied = (
+        amp_overflow_state["optimizer_steps_applied"] - epoch_applied_before
+    )
+    stats.update({
+        "amp_overflow_count": epoch_overflow_count,
+        "amp_overflow_total": amp_overflow_state["total_overflows"],
+        "amp_consecutive_overflows": amp_overflow_state["consecutive_overflows"],
+        "optimizer_step_attempts": epoch_step_attempts,
+        "optimizer_steps_applied": epoch_steps_applied,
+        "optimizer_step_attempts_total": amp_overflow_state["optimizer_step_attempts"],
+        "optimizer_steps_applied_total": amp_overflow_state["optimizer_steps_applied"],
+        "amp_scale": (
+            float(fp16_scaler.get_scale())
+            if fp16_scaler is not None
+            else None
+        ),
+    })
+    return stats
 
 
 class DINOLoss(nn.Module):

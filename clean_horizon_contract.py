@@ -16,7 +16,8 @@ import torch
 import torch.distributed as dist
 
 
-CONTRACT_VERSION = 1
+CONTRACT_VERSION = 2
+AMP_OVERFLOW_STATE_VERSION = 1
 
 TRAINING_CONFIG_FIELDS = (
     "arch",
@@ -29,6 +30,7 @@ TRAINING_CONFIG_FIELDS = (
     "teacher_temp",
     "warmup_teacher_temp_epochs",
     "use_fp16",
+    "amp_max_consecutive_overflows",
     "weight_decay",
     "weight_decay_end",
     "clip_grad",
@@ -65,11 +67,111 @@ REQUIRED_RESUME_KEYS = {
     "dino_loss",
     "training_contract",
     "rng_states",
+    "amp_overflow_state",
 }
 
 
 class CleanHorizonContractError(RuntimeError):
     """Raised when a resume would change the frozen training horizon."""
+
+
+def create_amp_overflow_state(max_consecutive_overflows: int) -> dict[str, int]:
+    """Create checkpointable state for recoverable dynamic-loss-scaling skips."""
+    if max_consecutive_overflows <= 0:
+        raise ValueError("max_consecutive_overflows must be positive")
+    return {
+        "state_version": AMP_OVERFLOW_STATE_VERSION,
+        "total_overflows": 0,
+        "consecutive_overflows": 0,
+        "max_consecutive_overflows": int(max_consecutive_overflows),
+        "optimizer_step_attempts": 0,
+        "optimizer_steps_applied": 0,
+    }
+
+
+def validate_amp_overflow_state(
+    state: Any,
+    *,
+    expected_max_consecutive_overflows: int,
+) -> dict[str, int]:
+    """Validate and normalize AMP overflow state restored from a checkpoint."""
+    if not isinstance(state, dict):
+        raise CleanHorizonContractError("Checkpoint AMP overflow state is not a mapping")
+    required = {
+        "state_version",
+        "total_overflows",
+        "consecutive_overflows",
+        "max_consecutive_overflows",
+        "optimizer_step_attempts",
+        "optimizer_steps_applied",
+    }
+    missing = sorted(required.difference(state))
+    if missing:
+        raise CleanHorizonContractError(
+            f"Checkpoint AMP overflow state is missing {missing}"
+        )
+    for key in required:
+        value = state[key]
+        if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+            raise CleanHorizonContractError(
+                f"Checkpoint AMP overflow field {key!r} is not an integer"
+            )
+    normalized = {key: int(state[key]) for key in required}
+    if normalized["state_version"] != AMP_OVERFLOW_STATE_VERSION:
+        raise CleanHorizonContractError("Checkpoint AMP overflow state version differs")
+    if normalized["max_consecutive_overflows"] != int(
+        expected_max_consecutive_overflows
+    ):
+        raise CleanHorizonContractError(
+            "Checkpoint AMP overflow threshold differs from the training contract"
+        )
+    if normalized["total_overflows"] < 0:
+        raise CleanHorizonContractError("Checkpoint AMP total overflow count is negative")
+    if not 0 <= normalized["consecutive_overflows"] <= normalized["total_overflows"]:
+        raise CleanHorizonContractError(
+            "Checkpoint AMP consecutive overflow count is invalid"
+        )
+    if (
+        normalized["consecutive_overflows"]
+        >= normalized["max_consecutive_overflows"]
+    ):
+        raise CleanHorizonContractError(
+            "Checkpoint AMP overflow state has already reached the kill limit"
+        )
+    if not 0 <= normalized["optimizer_steps_applied"] <= normalized[
+        "optimizer_step_attempts"
+    ]:
+        raise CleanHorizonContractError(
+            "Checkpoint optimizer-step counters are invalid"
+        )
+    if (
+        normalized["optimizer_step_attempts"]
+        - normalized["optimizer_steps_applied"]
+        != normalized["total_overflows"]
+    ):
+        raise CleanHorizonContractError(
+            "Checkpoint optimizer-step counters disagree with AMP overflow total"
+        )
+    return normalized
+
+
+def record_amp_optimizer_attempt(
+    state: dict[str, int],
+    *,
+    overflowed: bool,
+) -> bool:
+    """Record one scheduled optimizer attempt and report whether the kill limit hit."""
+    state["optimizer_step_attempts"] += 1
+    if overflowed:
+        state["total_overflows"] += 1
+        state["consecutive_overflows"] += 1
+    else:
+        state["consecutive_overflows"] = 0
+        state["optimizer_steps_applied"] += 1
+    return (
+        state["consecutive_overflows"]
+        >= state["max_consecutive_overflows"]
+    )
 
 
 def optimizer_steps_per_epoch(
@@ -276,11 +378,29 @@ def validate_resume_checkpoint(
                 f"Checkpoint RNG state for rank {rank} is missing {missing_rng}"
             )
 
+    amp_overflow_state = validate_amp_overflow_state(
+        checkpoint["amp_overflow_state"],
+        expected_max_consecutive_overflows=int(
+            expected_contract["training_config"]["amp_max_consecutive_overflows"]
+        ),
+    )
+    expected_attempts = (
+        completed_epochs
+        * int(expected_contract["runtime"]["optimizer_steps_per_epoch"])
+    )
+    if amp_overflow_state["optimizer_step_attempts"] != expected_attempts:
+        raise CleanHorizonContractError(
+            "Checkpoint optimizer-step coordinate differs from completed epochs: "
+            f"{amp_overflow_state['optimizer_step_attempts']} attempts, "
+            f"expected {expected_attempts}"
+        )
+
     identity = {
         "basename": path.name,
         "size_bytes": path.stat().st_size,
         "completed_epochs": completed_epochs,
         "filename_epoch": filename_epoch,
+        "amp_overflow_state": amp_overflow_state,
     }
     del checkpoint
     return identity

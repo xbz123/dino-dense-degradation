@@ -53,6 +53,7 @@ args=(
   --diag_every 5
   --attn_viz_every 25
   --use_fp16 true
+  --amp_max_consecutive_overflows 3
   --local_crops_number 4
   --num_workers 2
   --teacher_temp 0.07
@@ -62,7 +63,7 @@ args=(
   --expected_world_size 2
   --max_runtime_hours 11.5
   --runtime_reserve_minutes 45
-  --run_name dino_v3_clean_horizon_seed0_v1
+  --run_name dino_v3_clean_horizon_seed0_v2
 )
 
 if [[ -n "${RESUME_FROM}" ]]; then
