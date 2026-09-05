@@ -19,6 +19,10 @@ semantic segmentation.
 
 ## Current Status
 
+Documentation reconciled on 2026-09-05; remote observations below stop at
+2026-09-01. See the [execution snapshot](RUN_STATUS_2026-09-05.md) for evidence
+levels, pending local artifact acceptance, and the next-session checklist.
+
 ### Kaggle Pretraining Workflow
 
 The repository includes a Kaggle-oriented training workflow for running DINO
@@ -29,8 +33,8 @@ Completed work:
 - Added a resumable 12-hour `Save & Run All` workflow documented in
   `KAGGLE_GUIDE.md`.
 - Configured training to write the latest checkpoint to
-  `dino_output/checkpoint.pth` and periodic historical checkpoints such as
-  `dino_output/checkpoint0010.pth`.
+  `dino_clean_horizon_seed0/checkpoint.pth` for the registered V2 run;
+  `dino_output/` is the historical workflow's output directory.
 - Updated checkpoint loading for PyTorch 2.6+ compatibility where
   `torch.load` defaults to `weights_only=True`.
 - Removed a distributed startup issue caused by evaluating `torch.hub.list`
@@ -103,7 +107,8 @@ The clean single-horizon baseline V2 is registered before V2 training at source
 schedule, backbone seed 0, labels `180 / 250 / 318`, T4 x2, effective batch
 256, and a fail-closed cross-session resume contract with per-rank RNG state,
 dynamic-loss-scaling state, and attempted/applied optimizer-step coordinates.
-No V2 clean-horizon output has been accepted yet.
+V2 has remotely validated partial session outputs, but no clean-horizon
+downstream endpoint or scientific verdict has been accepted yet.
 
 Kaggle Version 20 (`346119135`,
 `clean-horizon-seed0-session1-v1`) started correctly but terminated at epoch
@@ -123,12 +128,19 @@ overflows at the boundary. The event record identifies epoch 17, iteration 793,
 with scaler reduction `1048576 -> 524288`. These are engineering continuity
 artifacts, not downstream evidence.
 
-Kaggle Version 22 (`clean-horizon-seed0-session2-v2`) is now running on T4 x2.
-The Notebook source is unchanged except that `CLEAN_HORIZON_RESUME_FROM` points
-to the mounted Version-21 rolling checkpoint; the only added input is the
-Version-21 Notebook output. Strict V2 validation must accept the checkpoint,
-contract, source, dataset, RNG, AMP, and optimizer coordinates before any new
-model update.
+Kaggle Version 22 (`346345784`, `clean-horizon-seed0-session2-v2`) completed
+successfully at `partial_runtime_guard`: 33 completed epochs (last label 32),
+16302 attempted / 16299 applied updates, cumulative overflow 3 / consecutive
+0, and a 704835052-byte rolling checkpoint. It resumed from Version 21 at
+epoch 18. Its Notebook checkpoint validation completed successfully, including
+the two-rank RNG check. Independent local download and revalidation of this
+session's raw outputs remain pending.
+
+At the last remote check on 2026-09-01, the draft input had been updated to
+Version 22, but Session 3 / Version 23 submission was blocked by GPU quota and
+no new version was created. The reported three-day reset interval is stale
+operational evidence; refresh quota and version history before retrying. The
+hourly monitor was deleted, and no CPU fallback was selected.
 
 The repository also includes a Colab notebook for the current Drive-based
 evaluation workflow:
@@ -233,8 +245,11 @@ Planned research and engineering work:
 2. Preserve the completed labels `180 / 250 / 318`, seeds
    `42 / 1337 / 2027`, and their predeclared paired changes as stitched-run
    exploratory evidence; do not reinterpret them as a clean-horizon gate.
-3. Run the registered clean fixed-horizon phenomenon reproduction without
-   changing its source, schedule, endpoint, probe protocol, or seed handling.
+3. Independently archive and validate V22, refresh remote state, then resume
+   the registered clean baseline from its latest accepted boundary without
+   changing source, schedule, endpoint, probe protocol, or seed handling.
+   Complete the clean-baseline label-180 noise freeze before opening its
+   label-250/318 probe outputs; do not reuse the stitched-run noise freeze.
 4. Run the conditional COCO-Stuff consistency probe only if that clean-horizon
    VOC gate reaches a scientific verdict.
 5. Only if that clean-horizon phenomenon gate passes, freeze one intervention
@@ -259,7 +274,8 @@ Planned research and engineering work:
 - `eval_coco_stuff_dense.py`: COCO-Stuff selected-checkpoint dense evaluation
   script.
 - `audit_training_schedule.py`: Read-only checkpoint/log schedule audit.
-- `REVIEW_BASELINE_2026-07-26.md`: Pinned commits, local artifact hashes,
+- `RUN_STATUS_2026-09-05.md`: Last-observed session state and continuation checklist.
+- `REVIEW_BASELINE_2026-07-26.md`: Pinned commits, historical artifact inventory,
   coordinate contract, and missing external evidence inventory.
 - `notebooks/colab_dense_degradation_all_checkpoints.ipynb`: Colab workflow for
   evaluating all Drive checkpoints and exporting mIoU, DSE metrics, and

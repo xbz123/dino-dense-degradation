@@ -2,6 +2,22 @@
 
 > Fork of [facebookresearch/dino](https://github.com/facebookresearch/dino) with added instrumentation to detect **Dense Degradation** during long-horizon self-supervised pre-training.
 
+## Current Evidence And Next Run
+
+Updated 2026-09-05 from remote evidence last checked on 2026-09-01.
+The historical teacher VOC v2 decline is repeatable across three probe seeds
+but comes from a stitched training trajectory, not a confirmed clean-horizon
+SDD result. The registered clean baseline V2 has reached 33/319 completed
+epochs. Version 22 stopped successfully at its runtime guard; independent local
+artifact acceptance is pending. Session 3 was quota-blocked at the last check,
+and no hourly monitor remains active. Refresh remote state before resuming.
+
+Read the [execution snapshot](RUN_STATUS_2026-09-05.md),
+[project status](PROJECT_STATUS.md), and
+[frozen protocol](CLEAN_HORIZON_BASELINE_PROTOCOL_2026-08-30.md) first.
+Formal probes and any late-stage intervention remain conditional; training
+proxies alone cannot establish either dense degradation or CRR efficacy.
+
 ## What is Dense Degradation?
 
 Dense Degradation is a phenomenon observed in DINO/DINOv2-style self-supervised training where:
@@ -17,8 +33,8 @@ This creates a *decoupled dynamic*: KNN classification accuracy plateaus or impr
 ## Added Features
 
 ### 1. Dense Degradation Diagnostics (`dense_diagnostics.py`)
-- **Effective Rank**: Tracks the dimensionality of patch token representations via covariance eigenvalue entropy. A sharp drop indicates collapse.
-- **CLS-Patch Cosine Similarity**: Monitors feature homogenization between global and local tokens. A sharp rise indicates degradation.
+- **Effective Rank**: Tracks patch-spectrum concentration; a drop is a diagnostic warning, not sufficient evidence of collapse.
+- **CLS-Patch Cosine Similarity**: Monitors feature homogenization; a rise must be checked against normalized diagnostics and downstream results.
 - **Condition Number**: Tracks covariance matrix conditioning.
 - **Attention Map Visualization**: Saves CLS→patch attention heatmaps at regular intervals to visually inspect degradation.
 

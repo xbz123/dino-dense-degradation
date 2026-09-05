@@ -221,3 +221,20 @@ checkpoint mounted from the preceding Notebook output.
 
 Neither session is a downstream scientific result. The clean-horizon gate
 remains pending until label `318` and the registered probes are complete.
+
+### Execution Addendum 2026-09-05
+
+The frozen contract and decision rules above are unchanged. The last remote
+observation on 2026-09-01 supersedes the launch-only status for Version 22:
+script version `346345784` succeeded in 37239.0 seconds with
+`partial_runtime_guard`, completed epochs 33, last label 32, attempts/applied
+16302/16299, total/consecutive overflow 3/0, and rolling size 704835052 bytes.
+The Notebook validation cell completed its checkpoint load, contract, epoch,
+AMP, coordinate, and two-rank RNG checks. Local independent artifact acceptance
+is still pending.
+
+The draft parent input was updated to Version 22, but Session 3 / Version 23
+was not created because GPU quota rejected submission. No CPU fallback or
+scientific setting change occurred. Quota must be refreshed rather than
+assuming that the then-reported three-day wait still applies. See
+[execution snapshot](RUN_STATUS_2026-09-05.md) for the next-session checklist.

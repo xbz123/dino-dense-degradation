@@ -1,6 +1,8 @@
 # Dense Degradation Diagnostic Suite Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` for independent implementation tasks, or `superpowers:executing-plans` for inline task execution. Track progress with checklist syntax and verify each step before claiming completion.
+Execution status: see [the 2026-09-05 snapshot](RUN_STATUS_2026-09-05.md).
+The phase descriptions below describe capabilities, not permission to bypass
+the immediate scientific gate or rerun completed historical experiments.
 
 **Goal:** Build a reliable dense patch representation diagnostic suite for DINO ViT-S/16 checkpoints trained on ImageNet-100, so the project can evaluate whether SDD-like degradation appears in downstream and structural metrics as training continues beyond epoch 215.
 
@@ -27,6 +29,11 @@ Current correction:
 > The previous raw-feature DSE/class-separability trend is a warning signal, not final evidence of angular structural degradation. Patch feature norms changed strongly during training, so the next validation run must compare raw final-LayerNorm patch tokens against L2-normalized patch tokens.
 
 ## Immediate Scientific Gate
+
+The current critical path is independent V22 artifact acceptance, refreshing
+Kaggle quota/version state, and continuing the frozen baseline from completed
+epoch 33 if no newer accepted session exists. Session 3 was not created at the
+2026-09-01 check. Do not restart V2 from epoch 0 or launch COCO now.
 
 Complete these steps before implementing a late-stage mitigation:
 
@@ -61,7 +68,7 @@ effect, which limits the first migration to one regularizer.
 
 ## Implementation Order
 
-### Phase 1: Current Colab Evaluation Run
+### Phase 1: Historical Structural Evaluation Reference
 
 Use this phase when new Kaggle checkpoints have been copied or uploaded into Google Drive.
 
@@ -214,8 +221,9 @@ epoch -> effective rank
 
 ### Phase 4: COCO-Stuff Selected Checkpoints
 
-Run COCO-Stuff only after matching `global_confusion_v2` VOC and structural
-diagnostics are available. Use the same explicit probe seed and checkpoint key
+Run COCO-Stuff only after a sufficiently continuous clean-baseline audit and
+its registered VOC scientific verdict. Matching v2 files alone do not open
+this gate. Use the same explicit probe seed and checkpoint key
 for both datasets; comparison must fail closed on any mismatch.
 
 Formal consistency checkpoints:
@@ -231,8 +239,9 @@ run later as exploratory context, but it cannot replace the registered
 
 ### Phase 5: Clean Single-Horizon Training
 
-Run the registered baseline from epoch 0. Do not resume from the historical
-stitched checkpoints. Every Kaggle session checks out source `4c16679` and
+The registered V2 baseline started from epoch 0 and now continues only from its
+latest accepted V2 session. Do not resume from historical stitched or V1
+checkpoints. Every Kaggle session checks out source `4c16679` and
 uses `run_clean_horizon_kaggle.sh` with the same 319-completed-epoch contract.
 
 Training constraints:

@@ -2,6 +2,12 @@
 
 Status: pinned execution baseline for the schedule-audit and metric-v2 round.
 
+Status note 2026-09-05: this is the historical review baseline, not the
+current training source or run status. The stitched-run v2 repeats are complete;
+the separate clean V2 baseline and its pending local acceptance are tracked in
+[the execution snapshot](RUN_STATUS_2026-09-05.md). Pinned commits and original
+audit evidence below remain historical records.
+
 This record fixes the repository state and external evidence inventory before
 the late-stage phenomenon is re-evaluated:
 

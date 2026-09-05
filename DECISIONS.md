@@ -13,8 +13,8 @@ diagnostic suite for DINO ViT-S/16 training dynamics.
 Rationale:
 
 - The current pretraining setup uses ImageNet-100, not ImageNet-1K.
-- Current training has reached the 200+ epoch range, while the SDD paper's DINO
-  ViT-S/16 reference setting trains much longer.
+- Historical stitched training reached labels beyond 200; the separate clean
+  baseline had reached only 33 completed epochs at the 2026-09-01 check.
 - PASCAL VOC linear segmentation is useful but may be too coarse to reveal
   early structural degradation.
 - Structural metrics and qualitative maps can show representation drift before
@@ -23,10 +23,10 @@ Rationale:
 Accepted wording:
 
 ```text
-The historical ImageNet-100 + DINO ViT-S/16 batch-mean-v1 VOC curve contains
-an apparent downstream drop, but no metric-v2 degradation window is confirmed
-yet. This motivates fixed-seed v2 reruns, structural diagnostics, and only then
-a late-stage intervention.
+The historical ImageNet-100 teacher VOC decline was reproduced under metric
+v2 across three probe seeds, but the source trajectory is stitched. It cannot
+establish a clean-horizon phenomenon or authorize a late-stage intervention.
+The clean baseline and its own registered probes remain pending.
 ```
 
 Avoid this wording:
@@ -174,7 +174,7 @@ Rationale:
 
 ### Decision: Treat the verified epoch-170-to-318 archive as stitched
 
-The offline archive contains 15 byte-verified checkpoints with consistent
+The historical offline archive contains 15 verified checkpoints with consistent
 epoch coordinates. Embedded training arguments separate them into target
 horizons of 200, 300, and 500 epochs. The schedule audit therefore returns
 `stitched` with partial evidence.
@@ -182,8 +182,8 @@ horizons of 200, 300, and 500 epochs. The schedule audit therefore returns
 Consequences:
 
 - Historical VOC and structural curves remain useful exploratory evidence.
-- Selected-checkpoint metric-v2 repeats still run to quantify probe noise and
-  endpoint behavior, but they cannot establish a clean-horizon phenomenon.
+- Selected-checkpoint metric-v2 repeats are complete and quantify probe noise
+  and endpoint behavior, but cannot establish a clean-horizon phenomenon.
 - Independent session logs remain required to localize LR/WD boundary
   behavior, not to reverse the stitched classification.
 - A mitigation experiment requires a predeclared clean fixed-horizon

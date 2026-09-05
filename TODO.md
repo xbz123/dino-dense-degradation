@@ -4,12 +4,16 @@ This file tracks the current task breakdown for the DINO dense degradation
 project. Keep tasks concrete and update checkboxes as work lands in the
 repository or external experiment outputs are confirmed.
 
+Updated 2026-09-05. Remote evidence cutoff: 2026-09-01. See
+[execution snapshot](RUN_STATUS_2026-09-05.md). P0 clean-horizon continuation is
+the critical path; the lower sections are capability/backlog references.
+
 ## Priority 0: Reproducibility And Phenomenon Gate
 
 - [x] Add an explicit VOC `--probe_seed`, reset it before every checkpoint
   head fit, and record it in the result JSON.
 - [x] Expose `VOC_PROBE_SEED` in the existing Colab and Kaggle notebooks.
-- [x] Rerun epochs `180 / 250 / 318` with probe seeds
+- [x] Rerun historical stitched labels `180 / 250 / 318` with probe seeds
   `42 / 1337 / 2027`.
 - [x] Report per-seed VOC rows, within-checkpoint mean/sample SD, and paired
   checkpoint changes.
@@ -21,12 +25,21 @@ repository or external experiment outputs are confirmed.
   reproduction V2 at source `4c16679`; V1 was an excluded engineering failure.
 - [ ] Run the clean-horizon baseline to label 318 and independently accept all
   session checkpoints and summaries.
+- [ ] Download and independently validate V22 raw artifacts; refresh version
+  history and GPU quota before continuing from completed epoch 33.
+- [ ] After clean label 318 acceptance, run clean label-180 probes and freeze
+  their own noise threshold before opening clean label-250/318 probe outputs.
 - [ ] Freeze the first late-stage C0/C1 fork, endpoint, equivalence margin,
   stopping rule, and kill criterion.
 - [ ] Do not add a late KoLeo arm or more fork points unless the first C1
   intervention passes its predeclared gate.
 
-## Priority 1: Colab Evaluation From Current Checkpoints
+## Priority 1: Historical Structural Archive Review
+
+Historical `to_epoch_0215` and `to_epoch_0318_raw_l2_full` output directories
+exist through external-storage links. Inventory and review existing files
+before considering any rerun. The items below do not declare those runs absent
+or authorize a new GPU sweep; unchecked scientific interpretations need review.
 
 - [x] Fix `DSE_IMAGE_ROOT` lookup so lowercase `imagenet100/train` is tried
   before uppercase `ImageNet100/train`.
@@ -67,9 +80,10 @@ repository or external experiment outputs are confirmed.
   figures/fig_raw_vs_l2_spectrum.png
   ```
 
-- [ ] Copy or sync the latest Kaggle checkpoints after epoch 215 into
-  `MyDrive/dinocheckpoint`.
-- [ ] Run a Colab raw/L2 smoke test on one checkpoint:
+- [ ] Reconcile archived historical checkpoint/diagnostic coverage; keep clean
+  V2 outputs in a separate run namespace.
+- [ ] Only if required archived diagnostics are missing, use this smoke-test
+  reference under a separately scoped execution request:
 
   ```python
   CHECKPOINT_EPOCH_FILTER = [215]
@@ -92,7 +106,8 @@ repository or external experiment outputs are confirmed.
   summary_report.md
   ```
 
-- [ ] Run the full Colab raw/L2 structural validation sweep:
+- [ ] Confirm archived full raw/L2 structural coverage against this recipe
+  before deciding whether missing outputs require a rerun:
 
   ```python
   CHECKPOINT_EPOCH_FILTER = None
@@ -104,7 +119,8 @@ repository or external experiment outputs are confirmed.
   ```
 
 - [ ] Inspect and summarize the latest `summary_report.md`.
-- [ ] Compare best VOC mIoU vs final VOC mIoU.
+- [ ] Keep any historical best-versus-final display descriptive; use only the
+  registered label-318 minus label-180 contrast for the formal gate.
 - [ ] Compare raw vs L2 DSE, class separability, effective rank, and top
   eigenvalue ratio.
 - [ ] Determine whether the raw DSE decline survives L2 normalization.
@@ -140,17 +156,9 @@ repository or external experiment outputs are confirmed.
 Status: evaluator complete; formal run blocked until a clean-horizon VOC gate
 reaches a scientific verdict.
 
-- [ ] Choose 4-6 checkpoints after the latest VOC/DSE sweep.
-- [ ] Use this selection rule:
-
-  ```text
-  earliest checkpoint
-  VOC best checkpoint
-  middle checkpoint
-  checkpoint 215
-  newest checkpoint after 215
-  latest available checkpoint
-  ```
+- [ ] Use clean-baseline labels `180 / 318`, probe seeds `42 / 1337 / 2027`,
+  and explicit teacher representation only after the registered VOC verdict.
+  Do not select checkpoints from the observed VOC peak.
 
 - [x] Implement or adapt a COCO-Stuff linear segmentation evaluator.
 - [ ] Run COCO-Stuff only on selected checkpoints first.
@@ -170,6 +178,12 @@ reaches a scientific verdict.
   21; no historical or V1 checkpoint is its parent.
 - [x] Accept the Version-21 runtime boundary at 18 completed epochs and submit
   Version 22 from its rolling checkpoint with only the resume path changed.
+- [x] Inspect V22 successful runtime boundary remotely: completed epochs 33,
+  attempts/applied 16302/16299, overflow total/consecutive 3/0.
+- [x] Update draft Notebook parent input from V21 to V22 without changing the
+  training contract. Record quota-blocked submission, not a launched V23.
+- [ ] Independently archive/revalidate V22 and submit Session 3 after refreshing
+  quota and checking for intervening runs. No active monitor remains.
 - [ ] Preserve:
 
   ```text

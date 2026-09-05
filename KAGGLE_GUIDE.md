@@ -2,6 +2,12 @@
 
 在 Kaggle 上跑深度学习，核心逻辑是：**在网页端写好脚本 → 丢给后台服务器跑（Commit） → 跑完后提取 Output 续训。**
 
+文档更新于 2026-09-05；最后一次远端核验为 2026-09-01。V22 已成功在
+33/319 completed epochs 处触发 runtime guard，并非全部训练完成。Session 3
+当时因 GPU 配额未能提交；不要把当时“3 天后恢复”的提示当作今天的状态。
+先阅读[执行快照](RUN_STATUS_2026-09-05.md)和[冻结协议](CLEAN_HORIZON_BASELINE_PROTOCOL_2026-08-30.md)。
+本文示例不替代现有已冻结 Notebook；当前续训不要把 resume 路径清空。
+
 ---
 
 ## 第一阶段：环境与数据准备
@@ -99,7 +105,7 @@ print(f"Val classes: {len(os.listdir(val_path))}")
 - `--saveckp_freq 10`：每 10 个 epoch 保存一次历史 checkpoint
 - `--keep_last_ckpts 0`：保留所有历史 checkpoint，便于后续 dense degradation sweep
 - `--milestone_ckpt_epochs 180 250 318`：强制保留正式评测点
-- `--local_crops_number 4`：减少到 4 个局部裁切（节省约 25% 计算）
+- `--local_crops_number 4`：冻结配方使用 4 个局部裁切，不在续训时更改
 - `--diag_every 5`：每 5 个 epoch 运行一次稠密退化诊断
 - runtime guard 会在完整 epoch/checkpoint 后退出，为 Kaggle 封存预留时间
 - 显存占用约 9.6 GB / 16 GB，每 epoch 约 40 分钟
@@ -108,12 +114,13 @@ print(f"Val classes: {len(os.listdir(val_path))}")
 
 ## 第三阶段：一键后台挂机（Commit）
 
-代码写完后，**千万不要在网页里一直开着跑**（关网页后环境会被重置）：
+正式训练通过保存版本后台执行，不依赖浏览器保持打开：
 
 1. 点击 Kaggle 页面右上角的 **`Save Version`**
 2. 选择 **`Save & Run All (Commit)`**，点击 `Save`
 3. **放心关闭电脑**。Kaggle 会在后台连续跑最多 12 个小时
-4. 跑完（或超时中止）后，`/kaggle/working/` 下的所有文件会被永久封存为该 Notebook 的 Output
+4. 成功结束后检查该 Version 的 Output；不能假设异常或平台超时一定保留
+   完整产物，也不要将云端 Output 当作唯一永久备份。
 
 ---
 
@@ -128,27 +135,29 @@ Version 结束后：
 2. **开启下一轮**：
    - 点击 `Edit` 回到编辑界面
    - 点击右侧 `+ Add Input` → 选择 `Your Work` → 挂载你**自己上一轮的 Notebook**
+   - 如果同一 Notebook 输入已经挂载，使用 `Check for updates` 并核对确切
+     来源 Version；路径字符串不变不代表 checkpoint 版本没变
    - 把 Cell 3 的 `CLEAN_HORIZON_RESUME_FROM` 改成上一轮挂载路径下的
      `dino_clean_horizon_seed0/checkpoint.pth`
    - 再次 `Save Version` → `Save & Run All`，开始新的 12 小时挂机
 
 不得从任意历史 `checkpoint0180.pth`、stitched run 或其他源码版本继续。
 每一轮只接受结构化 contract 完全一致且可加载的 rolling checkpoint。
+同时检查内部 epoch、attempted/applied 更新数、AMP 累计与连续计数、两份
+rank RNG 状态及源码 clean 状态。先独立下载验收，日志和 summary 按 session
+分别保存。配额不足时保留草稿，不切 CPU、不改 batch/seed/epoch；提交被拒绝
+不能记作新 Version 已启动。
 
 ---
 
 ## 第五阶段：COCO-Stuff selected-checkpoint 验证
 
-这个阶段用于验证历史 PASCAL VOC batch-mean-v1 曲线中出现的
-post-epoch-180 dense drop，是否在修正后的 `global_confusion_v2` 协议和
-COCO-Stuff 上仍然存在。历史 v1 数值只作现象线索，不能进入正式比较或
-判定门。这个阶段**不重新训练 DINO backbone**，只对已保存的 checkpoint
-做 frozen-backbone linear probing。当前已验证的 epoch 170-318
-checkpoint 归档包含 `epochs=200 / 300 / 500` 三种 target，调度审计结果为
-`stitched`。因此这些 checkpoint 的 VOC/COCO 重测只能用于探索性刻画，
-不能按单一训练 horizon 完成正式现象判定。正式判定需要另行执行预注册、
-固定 target 的 clean-horizon 训练；独立 session `log.txt` 仍应补档，用于
-定位和量化历史边界。
+本节为条件式评测参考，当前不可直接执行。历史三 probe-seed teacher VOC
+v2 重测已经完成，但其 `epochs=200 / 300 / 500` 的 stitched 轨迹只能用于
+探索性刻画，不能开启正式 COCO 判定门。先完成 clean-horizon V2 训练及
+其 VOC 科学判定，再对同一 clean-baseline 的 labels 180/318 做 COCO
+frozen-backbone linear probing。历史 v1/v2 和 clean V2 数据不能混表；历史
+独立 session logs 的补档也不能改变已经观察到的 stitched 分类。
 
 ### 需要提前准备的 Kaggle Input
 
@@ -162,18 +171,18 @@ checkpoint 归档包含 `epochs=200 / 300 / 500` 三种 target，调度审计结
      ```
 
 2. **DINO checkpoints**
-   - 挂载包含历史 checkpoint 的 Kaggle Dataset。
+   - 挂载包含已验收 clean-baseline checkpoint 的输入，不使用历史 dinockp。
    - 正式 COCO 一致性验证目录里至少要有：
      ```text
      checkpoint0180.pth
      checkpoint0318.pth
      ```
-   - VOC 主门另需 `checkpoint0250.pth`；调度审计按
-     `REVIEW_BASELINE_2026-07-26.md` 的清单补齐边界 checkpoint 和独立
-     session logs。
+   - VOC 主门另需 `checkpoint0250.pth`；clean 审计保留从 V2 起点开始的
+     session 合同、checkpoint 元数据及独立日志。历史
+     `REVIEW_BASELINE_2026-07-26.md` 的补档清单不是 clean 父输入清单。
    - 示例路径：
      ```text
-     /kaggle/input/datasets/bingzhouxie/dinockp/
+     <accepted-clean-baseline-checkpoints>/
      ```
 
 3. **COCO-Stuff 数据**
@@ -216,7 +225,7 @@ checkpoint 归档包含 `epochs=200 / 300 / 500` 三种 target，调度审计结
 %cd /kaggle/working/dino
 
 !python eval_coco_stuff_dense.py \
-    --ckpt_dir /kaggle/input/datasets/bingzhouxie/dinockp \
+    --ckpt_dir '<accepted-clean-baseline-checkpoints>' \
     --coco_root /kaggle/input/datasets/dntai2/cocostuff-10k-v1-1 \
     --epochs 180,318 \
     --img_size 336 \
@@ -229,7 +238,7 @@ checkpoint 归档包含 `epochs=200 / 300 / 500` 三种 target，调度审计结
     --checkpoint_key teacher \
     --max_train_images 2000 \
     --max_val_images 500 \
-    --output_dir /kaggle/working/dino_dense_degradation_eval/to_epoch_0318_raw_l2/coco_stuff_selected_smoke
+    --output_dir /kaggle/working/dino_clean_horizon_seed0_eval/coco_stuff_selected_smoke
 ```
 
 Smoke test 通过后，检查输出：
@@ -252,7 +261,7 @@ coco_stuff_summary_global_confusion_v2.md
 %cd /kaggle/working/dino
 
 !python eval_coco_stuff_dense.py \
-    --ckpt_dir /kaggle/input/datasets/bingzhouxie/dinockp \
+    --ckpt_dir '<accepted-clean-baseline-checkpoints>' \
     --coco_root /kaggle/input/datasets/dntai2/cocostuff-10k-v1-1 \
     --epochs 180,318 \
     --img_size 336 \
@@ -263,9 +272,9 @@ coco_stuff_summary_global_confusion_v2.md
     --feature_dtype float16 \
     --probe_seed 42 \
     --checkpoint_key teacher \
-    --voc_results_json /kaggle/input/dino-eval-results/to_epoch_0318_raw_l2/voc_all_checkpoints/voc_miou_results_global_confusion_v2.json \
-    --dense_summary_csv /kaggle/input/dino-eval-results/to_epoch_0318_raw_l2/figures/combined_dense_summary.csv \
-    --output_dir /kaggle/working/dino_dense_degradation_eval/to_epoch_0318_raw_l2/coco_stuff_selected_seed42_teacher
+    --voc_results_json '<matching-clean-voc-v2-json>' \
+    --dense_summary_csv '<matching-clean-structural-summary-csv>' \
+    --output_dir /kaggle/working/dino_clean_horizon_seed0_eval/coco_stuff_selected_seed42_teacher
 ```
 
 对 `1337` 和 `2027` 分别重复正式命令，并使用 seed 专属输出目录。比较器
@@ -274,14 +283,10 @@ coco_stuff_summary_global_confusion_v2.md
 checkpoint structured identity 和源码 commit/dirty 状态必须完全匹配。每行还必须保留
 probe 配方和数据身份，并满足 `source_dirty=false`。
 
-判断标准：
-
-- 如果匹配协议的 COCO-Stuff v2 结果也在 epoch 180 附近最好，并在
-  epoch 318 下降，说明该方向不是 VOC 单一数据集现象。
-- 如果 COCO-Stuff v2 不下降，当前结论要保持谨慎，历史 VOC drop 可能
-  和 dataset/probe sensitivity 或旧 mIoU 估计器有关。
-- 如果曲线很 noisy，按预注册顺序对 `180 / 250 / 318` 使用
-  `{42, 1337, 2027}`，不要在看结果后更换 checkpoint 或 seed。
+上述占位路径必须替换为已核验输入，配方须与届时获准的 COCO 执行计划
+一致。Smoke test 不计入正式结果。COCO 只报告固定 labels 318−180 的
+配对差及三 seed 变化，作为次要一致性证据，不改变 VOC 判定、不宣称
+180 是全程峰值，也不按结果增加 checkpoint 或替换 seed。
 
 ---
 
@@ -292,6 +297,7 @@ probe 配方和数据身份，并满足 `source_dirty=false`。
 | Colab Free | T4 ×1 | 1979 | ~66 分钟 |
 | **Kaggle Free** | **T4 ×2** | **989** | **~40 分钟** |
 
-- 300 epochs 总计约 **200 小时**
-- Kaggle 每周 30 小时 GPU 额度 → 约 **7 周**完成
-- 可与 Colab 交替使用，checkpoint 完全兼容互通
+- V22 的 15 epochs 平均约 40.9 分钟/epoch，仅为该 session 的观测。
+- 若按该速度外推，33 后剩余 286 epochs 约需 195 小时；这不是运行预算
+  承诺，实际受配额、I/O、诊断和 session 开销影响。
+- 当前冻结合同要求 Kaggle T4 x2；不得直接与 Colab 单卡交替续训。
